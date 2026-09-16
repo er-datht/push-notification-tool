@@ -2,7 +2,7 @@
 
 Console UI for the Push Notification Tool (STAG only). Built from the Claude Design project `push-tool-console`.
 
-![Auto App Push console](docs/push-notification-tool.png)
+![Auto App Push console on desktop](docs/screenshots/desktop.png)
 
 ## Run
 
@@ -29,6 +29,15 @@ are read only inside the route handler, so the browser never sees the token and 
 past the API's CORS allowlist.
 
 Without them, the Execute button returns a 500 telling you what is missing — the UI itself still runs.
+
+## Screenshots
+
+Below 1180px the sidebar and the review rail become drawers, and a sticky bar at the bottom holds
+the run summary and the "Review & execute" button.
+
+| Tablet (768px) | Mobile (390px) |
+|---|---|
+| ![Tablet layout](docs/screenshots/tablet.png) | ![Mobile layout](docs/screenshots/mobile.png) |
 
 ## Structure
 
