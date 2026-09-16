@@ -21,11 +21,23 @@ There are no tests and no test command in this project yet.
 
 One page where a person fills in push notifications and sends them to the **STAG environment only**. It came from the Claude Design project `push-tool-console`.
 
-It is Next.js 16 (App Router) + React 19 + TypeScript. There is one route (`src/app/page.tsx`), no state library, no CSS framework, and no network code. Everything is plain `useState`. Imports use the `@/` alias for `src/`.
+It is Next.js 16 (App Router) + React 19 + TypeScript. There is one page route (`src/app/page.tsx`) plus one route handler, no state library, no CSS framework, and no data-fetching library — `fetch` only. Everything is plain `useState`. Imports use the `@/` alias for `src/`.
 
 Only **Auto App Push** works. The other push types in the sidebar are grey and disabled; their names come from `COMING_SOON` in `src/lib/types.ts`.
 
-**Nothing is sent anywhere yet.** `execute()` in `src/components/PushConsole.tsx` only switches the screen to "done", and the `runId` shown on that screen is a made-up string. To connect a real API, change that function (and probably make `DoneView` show what the server returned instead of the local rows).
+## Talking to the API
+
+`docs/API-DOC-auto-app-push.md` is the contract. `execute()` in `PushConsole.tsx` builds the payload with `buildPayload` and posts it through `submitAutoAppPush` (`src/lib/api.ts`) to our own route handler at `src/app/api/push/auto-app-push/route.ts`, which adds `X-APIToken` and forwards to `POST {ECS_API_URL}/api/test_notification/auto_app_pushes`. When the route handler itself has a problem (env not set, body not JSON, host unreachable) it answers with the same `{ messages: [] }` shape as the API's 400 — first the sentence to read, then raw detail — so `src/lib/api.ts` reads both the same way.
+
+**The browser must never call ecs-api directly.** The token is a shared secret and that path is not in the API's CORS allowlist. `ECS_API_URL` and `TEST_NOTIFICATION_API_TOKEN` are read only inside the route handler and must never be prefixed `NEXT_PUBLIC_`. Copy `.env.example` to `.env.local` to run against staging.
+
+Four responses matter, and `src/lib/api.ts` is the only place that branches on them:
+
+- **201** — the delivery file reached S3. Nothing has been sent. `DoneView` says *scheduled*, never *sent*, and shows `will_publish_at` / `filename` from the response rather than the local rows.
+- **400** — `messages[]` is a flat array; per-edition entries carry an `editions[n].` prefix. `splitMessages` peels that prefix off and routes each message to the matching card; everything else becomes a page-level banner. Row errors are stored in `PushConsole` as an `ApiVerdict` together with the JSON of the exact payload they answered, and are merged into the `rowErrors` memo only while the current payload still matches that key — so the verdict drops out on its own once anything in the payload changes, without every input handler having to clear it. Only `tryExecute` resets it explicitly, so a re-run of the same payload gets a fresh answer.
+- **401 / 404** — **empty body**. Never call `res.json()` on them, in the route handler or the client.
+
+`login_ids_count` in the 201 echoes what was sent; it is not a recipient count. IDs are filtered against `push_score_weekly` later with no error anywhere, which `DoneView` spells out.
 
 ## How the code is put together
 
@@ -43,30 +55,54 @@ So adding a new link kind means editing three spots:
 2. the `KINDS` array in `NotificationRowCard.tsx`, which sets the radio buttons and their order,
 3. the matching check inside `errorsFor`.
 
-`errorsFor` is the only validation. It returns full sentences that are shown to the user word for word, so write new ones in the same tone: "Delivery ID is required — the batch needs it to match the campaign."
+`errorsFor` holds the per-row rules, `validateRows` wraps it and adds the cross-row duplicate-`deliv_id` check, and `dateErrorFor` covers the one date field shared by every row (so a bad date is reported once, not repeated on every card). The messages are plain sentences in simple words, shown to the user word for word, so write new ones in the same tone: "Enter a delivery ID. The batch uses it to find the campaign."
+
+Some of those rules mirror limits the API enforces server-side, so the tester finds out without a round trip: `deliv_id` ≤ 24 chars, delivery time inside 08:00–22:00 JST, and no more than 2 hours ahead of now.
+
+### Every error names the input it came from
+
+`errorsFor` returns `RowError[]`, not strings: each message carries a `RowField` so `NotificationRowCard` can put it under the right input and set `aria-invalid` on it. A message with no visible field is useless — the tester reads "must be within 2 hours" and has nothing to click. So when you add a rule, give it a field.
+
+`time` is the field for rules about the hour and minute **together** (the 08:00–22:00 window, the 2-hour lead); `hour` and `min` are only for a malformed value in one of the two boxes. `errorsForField(errors, 'hour', 'time')` is how the card asks which marks an input gets, and that pairing is why both boxes redden on a window error but only one does on "Hour must be a whole number".
+
+`splitMessages` gives the API's `400` messages the same treatment, mapping the payload key each one opens with (`deliv_id`, `publish_hour_min`, `link_item`, `link_type`, `title`) onto the matching field via `FIELD_BY_PAYLOAD_KEY`. A key it doesn't recognise still shows, with `field: null`, in the card's fallback summary block — it must never be silently dropped. Add to that map when the API grows a field.
+
+A collapsed card hides its inputs and therefore its marks, so a card with errors gets a red stripe down its left edge (a `before:` pseudo-element on the `Card` in `NotificationRowCard`). That stripe is the whole indicator — an earlier "N to fix" count in the header was removed as noise; don't reintroduce a badge there.
+
+**Times are Asia/Tokyo, not the browser's timezone.** `todayInTokyo` and `tokyoEpoch` convert against a fixed UTC+9 (Japan has no DST); `formatPublishAt` reads the API's `+09:00` timestamp with a regex rather than letting `Date` re-render it locally. Anything read from the clock or `localStorage` is set in a mount effect, never seeded into `useState` — the page is prerendered, so a build-time date would hydrate against a different one.
 
 ### Errors only appear after Execute
 
 `rowErrors` stays empty until `checked` turns true, so no red text shows while someone is still typing. When Execute is pressed, `tryExecute`:
 
 1. sets `checked`,
-2. runs `errorsFor` again on its own instead of reading the memo, because the memo is still stale in that render,
+2. runs `validateRows` and `dateErrorFor` again on its own instead of reading the memo, because the memo is still stale in that render,
 3. opens any collapsed row that has an error,
 4. opens the recipients panel if the ID list is empty.
 
-Only when nothing is wrong does it open `ConfirmDialog`. Keep this order if you add more checks.
+Only when nothing is wrong does it open `ConfirmDialog`, whose confirm button calls `execute` — the one place that posts anything. Keep this order if you add more checks.
 
-`startOver` clears `checked` and `done` but keeps the rows and recipients, so the user can send a similar run again.
+`startOver` clears `checked`, `done`, and the API result, and bumps each `deliv_id` with `nextDelivId`, because the API treats a repeated `deliv_id` as the same delivery. Rows and recipients otherwise survive, so the user can send a similar run again. Login IDs and `distribute_now` also persist to `localStorage` via `src/lib/storage.ts` on each Execute.
 
-### Styling is one CSS file
+### Styling is Tailwind v4 + shadcn/ui
 
-`src/app/globals.css` (imported once from `layout.tsx`) has the colors and other design values as CSS variables on `:root` (plus `--radius` and `--shadow`), followed by every rule. Every class name starts with `ptc-`. There are no CSS modules, and almost no inline styles. The font is loaded with `next/font/google` in `layout.tsx`, which exposes it as the `--font-sans` variable that `body` reads.
+There is no hand-written CSS for components. Every component is styled with Tailwind utility classes, and the interactive pieces (buttons, inputs, labels, checkbox, radio groups, cards, badges, the confirm `Dialog`, the narrow-screen `Sheet` drawers) come from shadcn/ui, generated into `src/components/ui/`. Those files are ours: they have already been tuned to the mockup (6px radius, the blue primary, a `muted` button variant, a flat `Card` with the soft shadow), so edit them there rather than fighting them with `className` overrides at every call site. Add more with `npx shadcn@latest add <name>` (the project is on the Radix-based `radix-nova` preset; see `components.json`). One deliberate deviation: `class-variance-authority` is not used. `Button` and `Badge` keep their variants in plain `as const` lookup objects instead of `cva()`, so if a newly added component imports `cva`, rewrite it the same way and don't add the package back.
 
-The three-column layout is a CSS grid whose column widths come from variables. `--rail-track` is set inline from React state in `PushConsole.tsx` (400px when open, 64px when closed), and `--side-track` is set to 0 by the `.ptc-noside` class. Note the difference: closing the review rail only makes it narrow — `ReviewRail` still renders, just as a small stub. Closing the sidebar removes it from the page.
+`src/app/globals.css` holds only three things: the Tailwind/shadcn imports, the design tokens, and the react-toastify re-theme. The tokens are the mockup's palette written onto shadcn's variable names (`--primary`, `--border`, `--sidebar`, …) in `:root`, plus a few extra `--color-ink-*` / `--color-red-ink` style shades under `@theme inline` for tints shadcn has no slot for — use `text-ink-3`, `bg-red-tint`, `shadow-card` and so on rather than raw hex values. The font is loaded with `next/font/google` in `layout.tsx` as `--font-source-sans`, which the theme maps to `font-sans`.
 
-Inside a notification card, fields sit on a 12-column grid using the `span-2`, `span-4`, and `span-12` classes.
+react-toastify is the one thing still themed with plain CSS: its `.Toastify__*` classes come from the library, so the toast section of `globals.css` maps its `--toastify-*` variables onto the tokens. Restyle it there rather than overriding `.Toastify__*` rules elsewhere.
 
-Screen sizes: at 1180px the rail moves below the main column and the page scrolls normally instead of being a fixed-height app; at 860px the sidebar turns into a row that scrolls sideways; 700px makes a few more small changes.
+`FieldText.tsx` has the three tiny helpers every form shares (`FieldHelp`, `FieldError`, `Req`), so the muted help line and the red error line look the same on every input.
+
+### Layout and the narrow-screen drawers
+
+`useMediaQuery(NARROW_QUERY)` (`src/lib/useMediaQuery.ts`, 1180px) decides which shell `PushConsole` renders. It returns `false` during hydration on purpose, so the prerendered HTML always matches; the narrow layout arrives one frame after mount.
+
+Wide: a three-column CSS grid — `--side-track` (232px, or 0 with the sidebar closed, in which case the `<Sidebar>` is not rendered at all), the main column, and `--rail-track` (400px, or 64px when the rail is collapsed to its "Show review" stub). The app is `h-screen` and each column scrolls on its own.
+
+Narrow: a single column with a sticky action bar at the bottom (run summary + "Review & execute"). The sidebar becomes a left `Sheet` opened by the hamburger, and the whole `ReviewRail` renders inside a right `Sheet` with `onClose` set, which switches it to drawer mode (no Hide toggle, a Cancel button under Execute). `tryExecute` closes that sheet when validation fails, because the problems are marked on the form it would be covering.
+
+Inside a notification card, fields sit on a 12-column grid above 700px (`min-[700px]:col-span-4` / `-12`) and a 6-column one below.
 
 ## Words from the business side
 
