@@ -1,3 +1,4 @@
+import { bannerFor, linkLabelFor, messageFor } from '@/lib/apiMessages'
 import { LINKS, type NotificationRow, type RowError, type RowField } from '@/lib/types'
 
 /** Our own route handler. It keeps the X-APIToken, so the browser never sees it. */
@@ -115,6 +116,10 @@ const FIELD_BY_PAYLOAD_KEY: Record<string, RowField> = {
  * `errors[]` is one flat list. An entry about a single edition has a `field` like
  * `editions[n].deliv_id`. We hand those to the matching card, pointed at the right input, and keep
  * the rest for the toast. A key we do not know still reaches the card, just with no field.
+ *
+ * Every message is reworded through `messageFor` on the way, so the tester never sees a payload
+ * key. `editions` is the payload that was sent, so a `link_item` message can name the link field
+ * by the label the row shows for its `link_type`.
  */
 export function splitErrors(errors: ApiFieldError[], editions: EditionPayload[]) {
   const rowErrors = Array.from({ length: editions.length }, (): RowError[] => [])
@@ -123,10 +128,11 @@ export function splitErrors(errors: ApiFieldError[], editions: EditionPayload[])
     const m = err.field ? EDITION_FIELD.exec(err.field) : null
     const i = m ? Number(m[1]) : -1
     if (!m || i >= editions.length) {
-      general.push(err)
+      general.push({ ...err, message: messageFor(err, err.field ?? '') })
       continue
     }
-    rowErrors[i].push({ field: FIELD_BY_PAYLOAD_KEY[m[2]] ?? null, message: err.message })
+    const label = linkLabelFor(editions[i].link_type)
+    rowErrors[i].push({ field: FIELD_BY_PAYLOAD_KEY[m[2]] ?? null, message: messageFor(err, label) })
   }
   return { rowErrors, general }
 }
@@ -145,13 +151,14 @@ function errorFrom(body: ApiErrorBody | null, fallback: Pick<ApiError, 'title' |
   const errors = Array.isArray(e?.errors)
     ? e.errors.filter((x): x is ApiFieldError => typeof x?.message === 'string' && x.message !== '')
     : []
-  return {
+  const error = {
     error_id: e?.error_id,
     code: e?.code,
     title: e?.title || fallback.title,
     message: e?.message || fallback.message,
     errors,
   }
+  return { ...error, message: bannerFor(error) }
 }
 
 export async function submitAutoAppPush(payload: AutoAppPushPayload): Promise<SubmitResult> {

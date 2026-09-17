@@ -6,8 +6,8 @@ import type { ApiError } from '@/lib/api'
  * about `login_ids`. Entries about one edition stay on their card instead.
  *
  * Laid out the way the API's `error` object is: `title` as the headline, `message` as the banner
- * text (it already ends with its own `error_id`), then one line per entry left in `errors[]`,
- * each opened with the `field` it is about when it has one.
+ * text, then one line per entry left in `errors[]`. Both have already been put into our own words
+ * by `src/lib/apiMessages.ts`, so no payload key is shown — the tester has no input by that name.
  *
  * `autoClose: false` on purpose. These messages are the only copy of what the API said, and some
  * of them (a missing env var, a token missing from SSM) take a while to read.
@@ -24,7 +24,6 @@ export function toastApiError(error: ApiError): void {
         <ul className="mt-1.5 list-disc pl-4">
           {errors.map((e, i) => (
             <li key={i} className="text-[12.5px] leading-relaxed font-light break-words text-ink-3">
-              {e.field && <span className="font-mono text-ink-4">{e.field} — </span>}
               {e.message}
             </li>
           ))}
