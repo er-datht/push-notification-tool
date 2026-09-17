@@ -175,9 +175,9 @@ export function PushConsole() {
     }
 
     setApiVerdict({ payloadKey, rowErrors: res.rowErrors })
-    toastApiError(res.generalMessages)
+    toastApiError(res.error)
     setRows((rs) => rs.map((r, i) => (res.rowErrors[i]?.length ? { ...r, collapsed: false } : r)))
-    if (res.generalMessages.some((m) => m.startsWith('login_ids'))) setRecipientsOpen(true)
+    if (res.error.errors.some((e) => e.field?.startsWith('login_ids'))) setRecipientsOpen(true)
   }
 
   const startOver = () => {

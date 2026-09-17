@@ -27,17 +27,18 @@ Only **Auto App Push** works. The other push types in the sidebar are grey and d
 
 ## Talking to the API
 
-`docs/API-DOC-auto-app-push.md` is the contract. `execute()` in `PushConsole.tsx` builds the payload with `buildPayload` and posts it through `submitAutoAppPush` (`src/lib/api.ts`) to our own route handler at `src/app/api/push/auto-app-push/route.ts`, which adds `X-APIToken` and forwards to `POST {ECS_API_URL}/api/test_notification/auto_app_pushes`. When the route handler itself has a problem (env not set, body not JSON, host unreachable) it answers with the same `{ messages: [] }` shape as the API's 400 — first the sentence to read, then raw detail — so `src/lib/api.ts` reads both the same way.
+`docs/API-DOC-auto-app-push.md` is the contract. `execute()` in `PushConsole.tsx` builds the payload with `buildPayload` and posts it through `submitAutoAppPush` (`src/lib/api.ts`) to our own route handler at `src/app/api/push/auto-app-push/route.ts`, which adds `X-APIToken` and forwards to `POST {ECS_API_URL}/api/test_notification/auto_app_pushes`. When the route handler itself has a problem (env not set, body not JSON, host unreachable) it answers with the same `{ error: { code, title, message, errors[] } }` object as the API's failures (the house shape from the EMO API Specification Summary sheet, repeated in `docs/API-DOC-auto-app-push.md`) — `title` is the headline, `message` the sentence under it, `errors[]` raw detail — so `src/lib/api.ts` reads both the same way.
 
 **The browser must never call ecs-api directly.** The token is a shared secret and that path is not in the API's CORS allowlist. `ECS_API_URL` and `TEST_NOTIFICATION_API_TOKEN` are read only inside the route handler and must never be prefixed `NEXT_PUBLIC_`. Copy `.env.example` to `.env.local` to run against staging.
 
-Four responses matter, and `src/lib/api.ts` is the only place that branches on them:
+Every body follows the EMO envelope (see the Responses section of `docs/API-DOC-auto-app-push.md`): success is `{ status_code, message, data }`, failure is `{ error: { error_id, code, title, message, errors[] } }`. Four responses matter, and `src/lib/api.ts` is the only place that branches on them:
 
-- **201** — the delivery file reached S3. Nothing has been sent. `DoneView` says *scheduled*, never *sent*, and shows `will_publish_at` / `filename` from the response rather than the local rows.
-- **400** — `messages[]` is a flat array; per-edition entries carry an `editions[n].` prefix. `splitMessages` peels that prefix off and routes each message to the matching card; everything else becomes a page-level banner. Row errors are stored in `PushConsole` as an `ApiVerdict` together with the JSON of the exact payload they answered, and are merged into the `rowErrors` memo only while the current payload still matches that key — so the verdict drops out on its own once anything in the payload changes, without every input handler having to clear it. Only `tryExecute` resets it explicitly, so a re-run of the same payload gets a fresh answer.
-- **401 / 404** — **empty body**. Never call `res.json()` on them, in the route handler or the client.
+- **200 / 201** — `data.status` is `validated` (the endpoint is validation-only for now: nothing written, `filename` null, HTTP 200) or `created` (the delivery file reached S3, HTTP 201). Nothing has been sent either way. `DoneView` says *checked* or *scheduled*, never *sent*, and shows `will_publish_at` / `filename` / the cleaned-up `link_item` from `data.editions[]` rather than the local rows. `login_ids_count` sits on `data`, not per edition.
+- **422 / 400** — `error.errors[]` is a flat list of `{ error_id, field, message }`; an entry about one edition has a `field` like `editions[n].deliv_id`. `splitErrors` routes those to the matching card and keeps the rest in `error.errors` for the toast, which shows `error.title`, `error.message` and that remainder. 422 is validation; 400 is a body the API could not read (not JSON, or an unknown key — extra keys are rejected, not ignored). Row errors are stored in `PushConsole` as an `ApiVerdict` together with the JSON of the exact payload they answered, and are merged into the `rowErrors` memo only while the current payload still matches that key — so the verdict drops out on its own once anything in the payload changes, without every input handler having to clear it. Only `tryExecute` resets it explicitly, so a re-run of the same payload gets a fresh answer.
+- **401** — same error envelope (`AP-0002`); the SSM hint goes to the browser console, not the toast.
+- **404** — **empty body**, the only response without one. Never call `res.json()` on it, in the route handler or the client.
 
-`login_ids_count` in the 201 echoes what was sent; it is not a recipient count. IDs are filtered against `push_score_weekly` later with no error anywhere, which `DoneView` spells out.
+`data.login_ids_count` echoes what was sent; it is not a recipient count. IDs are filtered against `push_score_weekly` later with no error anywhere, which `DoneView` spells out.
 
 ## How the code is put together
 
@@ -65,7 +66,7 @@ Some of those rules mirror limits the API enforces server-side, so the tester fi
 
 `time` is the field for rules about the hour and minute **together** (the 08:00–22:00 window, the 2-hour lead); `hour` and `min` are only for a malformed value in one of the two boxes. `errorsForField(errors, 'hour', 'time')` is how the card asks which marks an input gets, and that pairing is why both boxes redden on a window error but only one does on "Hour must be a whole number".
 
-`splitMessages` gives the API's `400` messages the same treatment, mapping the payload key each one opens with (`deliv_id`, `publish_hour_min`, `link_item`, `link_type`, `title`) onto the matching field via `FIELD_BY_PAYLOAD_KEY`. A key it doesn't recognise still shows, with `field: null`, in the card's fallback summary block — it must never be silently dropped. Add to that map when the API grows a field.
+`splitErrors` gives the API's `422` entries the same treatment, mapping the payload key in each `field` (`deliv_id`, `publish_hour_min`, `link_item`, `link_type`, `title`) onto the matching input via `FIELD_BY_PAYLOAD_KEY`. A key it doesn't recognise still shows, with `field: null`, in the card's fallback summary block — it must never be silently dropped. Add to that map when the API grows a field.
 
 A collapsed card hides its inputs and therefore its marks, so a card with errors gets a red stripe down its left edge (a `before:` pseudo-element on the `Card` in `NotificationRowCard`). That stripe is the whole indicator — an earlier "N to fix" count in the header was removed as noise; don't reintroduce a badge there.
 

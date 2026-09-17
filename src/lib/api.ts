@@ -18,29 +18,66 @@ export interface AutoAppPushPayload {
   distribute_now: boolean
 }
 
-/** One item from the `201 Created` body, in the same order the editions were sent. */
+/** One item from `data.editions[]` in a success body, in the same order the editions were sent. */
 export interface ScheduledEdition {
   deliv_id: string
-  filename: string
+  title: string
+  link_type: string
+  /** The cleaned-up value: a `link_type: "01"` show id comes back shortened to `904148-0001`. */
+  link_item: string
   will_publish_at: string
-  /** How many ids we *sent*. Not how many people get the push. */
-  login_ids_count: number
+  /** `null` while the endpoint is validation-only; the file written to S3 once delivery is on. */
+  filename: string | null
 }
 
+/** The `data` of a `200` / `201` body. */
 export interface AutoAppPushResult {
+  /** `validated` = the payload was checked and nothing was written; `created` = the file is on S3. */
+  status: 'validated' | 'created'
+  date: string
+  /** How many ids we *sent*. Not how many people get the push. */
+  login_ids_count: number
   editions: ScheduledEdition[]
   distributed: boolean
 }
 
+/** The success envelope. `status_code` is a string that repeats the HTTP status. */
+interface SuccessBody {
+  status_code?: string
+  message?: string
+  data?: Partial<AutoAppPushResult>
+}
+
 export type SubmitResult =
   | { ok: true; data: AutoAppPushResult }
-  /** `rowErrors[i]` belongs to edition `i`. It is empty when the failure is not about any row. */
-  | { ok: false; rowErrors: RowError[][]; generalMessages: string[] }
+  /**
+   * `rowErrors[i]` belongs to edition `i`. `error.errors` keeps only the entries that were not
+   * about a row, so the toast never repeats what a card already shows.
+   */
+  | { ok: false; rowErrors: RowError[][]; error: ApiError }
 
-/** The API's 400 shape. Our route handler emits the same `messages[]` for its own problems. */
+/** One entry in `error.errors[]`. `field` is the payload key; `editions[n].deliv_id` for a row. */
+export interface ApiFieldError {
+  error_id?: string
+  field?: string
+  title?: string
+  message: string
+}
+
+/**
+ * The `error` object every failed response carries (the EMO envelope, see the Responses section
+ * of `docs/API-DOC-auto-app-push.md`). Our route handler emits the same shape for its own problems.
+ */
+export interface ApiError {
+  error_id?: string
+  code?: string
+  title: string
+  message: string
+  errors: ApiFieldError[]
+}
+
 interface ApiErrorBody {
-  error_description?: string
-  messages?: unknown
+  error?: Partial<Omit<ApiError, 'errors'>> & { errors?: unknown }
 }
 
 export function buildPayload(
@@ -63,9 +100,9 @@ export function buildPayload(
   }
 }
 
-const EDITION_PREFIX = /^editions\[(\d+)\]\.\s*/
+const EDITION_FIELD = /^editions\[(\d+)\]\.([a-z_]+)/
 
-/** The payload key a message starts with, and the input it belongs to. */
+/** The payload key inside an edition, and the input it belongs to. */
 const FIELD_BY_PAYLOAD_KEY: Record<string, RowField> = {
   publish_hour_min: 'time',
   deliv_id: 'delivId',
@@ -75,25 +112,23 @@ const FIELD_BY_PAYLOAD_KEY: Record<string, RowField> = {
 }
 
 /**
- * `messages` is one flat list. A message about a single edition starts with `editions[n].` and
- * then names the payload key. We split them up so each card shows its own message, without the
- * prefix and pointed at the right input. A key we do not know still shows, just with no field.
+ * `errors[]` is one flat list. An entry about a single edition has a `field` like
+ * `editions[n].deliv_id`. We hand those to the matching card, pointed at the right input, and keep
+ * the rest for the toast. A key we do not know still reaches the card, just with no field.
  */
-export function splitMessages(messages: string[], rowCount: number) {
-  const rowErrors = Array.from({ length: rowCount }, (): RowError[] => [])
-  const generalMessages: string[] = []
-  for (const message of messages) {
-    const m = EDITION_PREFIX.exec(message)
+export function splitErrors(errors: ApiFieldError[], editions: EditionPayload[]) {
+  const rowErrors = Array.from({ length: editions.length }, (): RowError[] => [])
+  const general: ApiFieldError[] = []
+  for (const err of errors) {
+    const m = err.field ? EDITION_FIELD.exec(err.field) : null
     const i = m ? Number(m[1]) : -1
-    if (!m || i < 0 || i >= rowCount) {
-      generalMessages.push(message)
+    if (!m || i >= editions.length) {
+      general.push(err)
       continue
     }
-    const rest = message.slice(m[0].length)
-    const key = /^([a-z_]+)\b/.exec(rest)
-    rowErrors[i].push({ field: (key && FIELD_BY_PAYLOAD_KEY[key[1]]) ?? null, message: rest })
+    rowErrors[i].push({ field: FIELD_BY_PAYLOAD_KEY[m[2]] ?? null, message: err.message })
   }
-  return { rowErrors, generalMessages }
+  return { rowErrors, general }
 }
 
 async function readBody<T>(res: Response): Promise<T | null> {
@@ -104,16 +139,28 @@ async function readBody<T>(res: Response): Promise<T | null> {
   }
 }
 
-/** `messages[]` is the content. The API's `error_description` is filler, so it is only a last resort. */
-function messagesFrom(body: ApiErrorBody | null, fallback: string): string[] {
-  const detail = Array.isArray(body?.messages) ? body.messages.map(String).filter(Boolean) : []
-  return detail.length ? detail : [body?.error_description ?? fallback]
+/** Reads `error` off a body, filling in what a partial or missing one leaves out. */
+function errorFrom(body: ApiErrorBody | null, fallback: Pick<ApiError, 'title' | 'message'>): ApiError {
+  const e = body?.error
+  const errors = Array.isArray(e?.errors)
+    ? e.errors.filter((x): x is ApiFieldError => typeof x?.message === 'string' && x.message !== '')
+    : []
+  return {
+    error_id: e?.error_id,
+    code: e?.code,
+    title: e?.title || fallback.title,
+    message: e?.message || fallback.message,
+    errors,
+  }
 }
 
 export async function submitAutoAppPush(payload: AutoAppPushPayload): Promise<SubmitResult> {
-  const rowCount = payload.editions.length
   // A run-level failure has nothing to say about any row, so `rowErrors` stays empty.
-  const fail = (...generalMessages: string[]): SubmitResult => ({ ok: false, rowErrors: [], generalMessages })
+  const fail = (title: string, message: string, code?: string): SubmitResult => ({
+    ok: false,
+    rowErrors: [],
+    error: { code, title, message, errors: [] },
+  })
 
   let res: Response
   try {
@@ -123,28 +170,52 @@ export async function submitAutoAppPush(payload: AutoAppPushPayload): Promise<Su
       body: JSON.stringify(payload),
     })
   } catch {
-    return fail('Could not reach this tool’s own server. Check that the dev server is still running, then try again.')
+    return fail('Could not reach this tool’s own server', 'Check that the dev server is still running, then try again.')
   }
 
-  if (res.status === 201) {
-    const data = await readBody<AutoAppPushResult>(res)
-    if (data && Array.isArray(data.editions)) return { ok: true, data }
-    return fail('The API took the run (201) but we could not read its answer. Check the ecs-api logs before you send again. The file may already be on S3.')
+  // 200 while the endpoint is validation-only, 201 once delivery is switched on. Same body.
+  if (res.status === 200 || res.status === 201) {
+    const data = (await readBody<SuccessBody>(res))?.data
+    if (data && Array.isArray(data.editions)) return { ok: true, data: data as AutoAppPushResult }
+    return fail(
+      'The API took the run but we could not read its answer',
+      `It answered ${res.status}, so the file may already be on S3. Check the ecs-api logs before you send again.`,
+    )
   }
 
-  if (res.status === 400) {
-    const messages = messagesFrom(await readBody<ApiErrorBody>(res), 'The API did not accept these values.')
-    const { rowErrors, generalMessages } = splitMessages(messages, rowCount)
-    return { ok: false, rowErrors, generalMessages }
+  // 422 is validation, one entry per field. 400 is a body the API could not read at all (not
+  // JSON, or a key it does not know) and uses the same envelope, so both are split the same way.
+  if (res.status === 422 || res.status === 400) {
+    const error = errorFrom(await readBody<ApiErrorBody>(res), {
+      title: 'The API did not accept these values',
+      message: `It answered ${res.status} without saying which values.`,
+    })
+    const { rowErrors, general } = splitErrors(error.errors, payload.editions)
+    return { ok: false, rowErrors, error: { ...error, errors: general } }
   }
 
-  // 401 and 404 come back with no body at all, so never parse them.
   if (res.status === 401) {
-    return fail('401 Unauthorized. The X-APIToken was missing or wrong. On staging this usually means the token is not in SSM at /epica/stg/api, not that .env.local is wrong.')
-  }
-  if (res.status === 404) {
-    return fail('404 Not Found. The endpoint is turned off on production on purpose. On staging it means the deploy is not out yet.')
+    const error = errorFrom(await readBody<ApiErrorBody>(res), {
+      title: 'Unauthorized',
+      message: 'The X-APIToken header is missing or wrong.',
+    })
+    // Where the token went wrong (SSM on staging, .env.local here) is for the console, not the tester.
+    console.error('401 from the API: X-APIToken missing or wrong. On staging check SSM at /epica/stg/api.')
+    return { ok: false, rowErrors: [], error }
   }
 
-  return fail(...messagesFrom(await readBody<ApiErrorBody>(res), `The request failed with HTTP ${res.status}.`))
+  // 404 is the one response with no body at all, so never parse it.
+  if (res.status === 404) {
+    return fail(
+      '404 Not Found',
+      'The endpoint is turned off on production on purpose. On staging it means the deploy is not out yet.',
+      'NOT_FOUND',
+    )
+  }
+
+  const error = errorFrom(await readBody<ApiErrorBody>(res), {
+    title: `The request failed with HTTP ${res.status}`,
+    message: 'The response had no error details.',
+  })
+  return { ok: false, rowErrors: [], error }
 }

@@ -9,11 +9,11 @@
 const ENDPOINT = '/api/test_notification/auto_app_pushes'
 
 /**
- * Same `messages[]` shape as the API's 400, so the client reads both the same way. The first
- * entry is the sentence the tester reads; the rest is raw detail like "TypeError: fetch failed".
+ * Same `error` object as the API's own failures, so the client reads both the same way. `title`
+ * is the headline, `message` the sentence under it, `errors` raw detail like "TypeError: fetch failed".
  */
-const problem = (status: number, description: string, detail: string[] = []) =>
-  Response.json({ messages: [description, ...detail] }, { status })
+const problem = (status: number, code: string, title: string, message: string, errors: { field?: string; message: string }[] = []) =>
+  Response.json({ error: { code, title, message, errors } }, { status })
 
 export async function POST(req: Request) {
   const base = process.env.ECS_API_URL
@@ -21,14 +21,20 @@ export async function POST(req: Request) {
 
   const missing = [!base && 'ECS_API_URL', !token && 'TEST_NOTIFICATION_API_TOKEN'].filter(Boolean) as string[]
   if (missing.length) {
-    return problem(500, 'The tool is not set up yet. Copy .env.example to .env.local and fill it in.', missing.map((name) => `${name} is not set`))
+    return problem(
+      500,
+      'NOT_CONFIGURED',
+      'The tool is not set up yet',
+      'Copy .env.example to .env.local and fill it in.',
+      missing.map((name) => ({ field: name, message: `${name} is not set` })),
+    )
   }
 
   let body: unknown
   try {
     body = await req.json()
   } catch {
-    return problem(400, 'The request body is not valid JSON.')
+    return problem(400, 'INVALID_JSON', 'Bad request', 'The request body is not valid JSON.')
   }
 
   const url = `${base!.replace(/\/+$/, '')}${ENDPOINT}`
@@ -41,15 +47,17 @@ export async function POST(req: Request) {
       cache: 'no-store',
     })
   } catch (err) {
-    return problem(502, `Could not reach ${url}. Check ECS_API_URL and whether staging is up.`, [String(err)])
+    return problem(502, 'API_UNREACHABLE', 'Could not reach the API', `${url} did not answer. Check ECS_API_URL and whether staging is up.`, [
+      { message: String(err) },
+    ])
   }
 
-  // 401 and 404 have no body, so do not call res.json() on them.
-  if (res.status === 401 || res.status === 404) {
+  // 404 is the one response with no body, so do not call res.json() on it.
+  if (res.status === 404) {
     return new Response(null, { status: res.status })
   }
 
-  // Pass 201 and 400 straight through. The client puts `messages[]` back into the form.
+  // Pass everything else straight through. The client puts `error.errors[]` back into the form.
   const text = await res.text()
   if (!text) return new Response(null, { status: res.status })
 
