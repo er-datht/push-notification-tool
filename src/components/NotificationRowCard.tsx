@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { RadioGroup } from "@/components/ui/radio-group";
 import { FieldError, FieldHelp, Req } from "@/components/FieldText";
 import {
   DELIV_ID_MAX,
@@ -16,6 +16,7 @@ import {
   type RowError,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { RadioGroup as RadioGroupPrimitive } from "radix-ui";
 
 interface Props {
   row: NotificationRow;
@@ -214,10 +215,11 @@ export function NotificationRowCard({
                   Where should the tap go? <Req />
                 </span>
               </Label>
-              {/* Segmented control: the radios stay for keyboard and screen readers, the labels carry the look. */}
+              {/* Segmented control: the radios stay for keyboard and screen readers, the labels carry the look.
+                  The bare Radix item is used on purpose — the styled `RadioGroupItem` keeps its 16px box even under `sr-only`. */}
               <RadioGroup
                 className={cn(
-                  "inline-flex w-auto flex-wrap gap-1 rounded-lg bg-muted p-1",
+                  "inline-grid w-auto auto-cols-fr grid-flow-col gap-1 rounded-lg bg-muted p-1",
                   kindErrors.length &&
                     "bg-red-tint ring-1 ring-destructive ring-inset",
                 )}
@@ -230,15 +232,15 @@ export function NotificationRowCard({
                   <label
                     key={k.kind}
                     className={cn(
-                      "relative inline-flex cursor-pointer items-center rounded-lg px-3.5 py-[7px] text-[13px] font-medium transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring",
+                      "relative inline-flex cursor-pointer items-center justify-center rounded-lg px-3.5 py-[7px] text-[13px] font-medium transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring",
                       row.kind === k.kind
                         ? "bg-card text-foreground shadow-[0_1px_2px_rgba(24,33,53,0.10)]"
                         : "text-ink-3",
                     )}
                   >
-                    <RadioGroupItem
+                    <RadioGroupPrimitive.Item
                       value={k.kind}
-                      className="sr-only after:hidden"
+                      className="sr-only"
                     />
                     {k.label}
                   </label>
