@@ -27,7 +27,7 @@ export function DoneView({ rows, result, server, onStartOver }: Props) {
   const created = status === "created";
 
   return (
-    <div className="max-w-[1040px] overflow-y-auto px-5 py-9 sm:px-10 sm:py-14">
+    <div className="w-full overflow-y-auto px-5 py-9 sm:px-10 sm:py-14">
       <Badge className="bg-blue-chip text-[11px] font-semibold tracking-[0.08em] text-blue-dark">
         {created ? "SCHEDULED" : "VALIDATED"}
       </Badge>
@@ -36,7 +36,7 @@ export function DoneView({ rows, result, server, onStartOver }: Props) {
           ? `配信予約しました — ${editions.length} notification(s) scheduled`
           : `Payload accepted — ${editions.length} notification(s) checked`}
       </h2>
-      <p className="mb-8 max-w-[62ch] text-[15px] leading-relaxed font-light text-ink-2">
+      <p className="mb-8 text-[15px] leading-relaxed font-light text-ink-2">
         {created ? (
           <>
             The API took the delivery file. Nothing has been sent yet.{" "}
@@ -98,7 +98,7 @@ export function DoneView({ rows, result, server, onStartOver }: Props) {
         <span>Login IDs sent — {login_ids_count}</span>
         <span>distribute_now — {distributed ? "yes" : "no"}</span>
       </div>
-      <p className="mt-6 max-w-[74ch] text-[13.5px] leading-relaxed font-light text-ink-2">
+      <p className="mt-6 text-[13.5px] leading-relaxed font-light text-ink-2">
         <strong className="font-semibold text-foreground">
           &ldquo;Login IDs sent&rdquo; is not a count of people.
         </strong>{" "}

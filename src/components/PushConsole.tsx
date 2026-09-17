@@ -289,17 +289,11 @@ export function PushConsole() {
           {narrow ? (
             <div className="sticky bottom-0 z-[5] flex flex-wrap items-center gap-x-5 gap-y-2.5 border-t bg-card px-5 py-3 shadow-bar sm:px-8">
               <p className="flex-[1_1_240px] text-[13px] leading-normal font-light text-ink-3">
-                {hasErrors ? (
-                  <strong className="font-semibold text-red-ink">Some fields need attention before this run can go out.</strong>
-                ) : (
-                  <>
-                    <strong className="font-semibold text-foreground">
-                      {rows.length} notification{rows.length === 1 ? '' : 's'}
-                    </strong>{' '}
-                    · {loginIds.length} recipient
-                    {loginIds.length === 1 ? '' : 's'} · {date || '—'} JST · {SERVER_LABEL[server]}
-                  </>
-                )}
+                <strong className="font-semibold text-foreground">
+                  {rows.length} notification{rows.length === 1 ? '' : 's'}
+                </strong>{' '}
+                · {loginIds.length} recipient
+                {loginIds.length === 1 ? '' : 's'} · {date || '—'} JST · {SERVER_LABEL[server]}
               </p>
               <Button
                 size="lg"
