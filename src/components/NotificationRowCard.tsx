@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup } from "@/components/ui/radio-group";
 import { FieldError, FieldHelp, Req } from "@/components/FieldText";
+import { TruncatedText } from "@/components/TruncatedText";
 import {
   DELIV_ID_MAX,
   errorsForField,
@@ -84,9 +85,9 @@ export function NotificationRowCard({
         <Badge variant="secondary" className="tabular-nums">
           {timeLabel(row)}
         </Badge>
-        <span className="order-5 min-w-0 flex-1 basis-full truncate text-[13.5px] font-light text-ink-3 min-[860px]:order-none min-[860px]:basis-auto">
+        <TruncatedText className="order-5 min-w-0 flex-1 basis-full text-[13.5px] font-light text-ink-3 min-[860px]:order-none min-[860px]:basis-auto">
           {row.title || "No notification text yet"}
-        </span>
+        </TruncatedText>
         <Button
           variant="ghost"
           size="sm"
