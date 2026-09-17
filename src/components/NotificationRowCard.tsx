@@ -250,7 +250,7 @@ export function NotificationRowCard({
             </div>
             <div className="col-span-6 min-[700px]:col-span-12">
               <Label htmlFor={`${uid}-link`} className="mb-1.5">
-                {L.label} <Req />
+                {L.label} {L.required && <Req />}
               </Label>
               <Input
                 id={`${uid}-link`}
