@@ -18,6 +18,8 @@ export interface LinkMeta {
   placeholder: string
   help: string
   line: string
+  /** Whether the tester must fill in `link_item`. Every kind needs one today; a kind that does not can turn this off. */
+  required: boolean
 }
 
 export const LINKS: Record<LinkKind, LinkMeta> = {
@@ -27,6 +29,7 @@ export const LINKS: Record<LinkKind, LinkMeta> = {
     placeholder: 'https://eplus.jp/',
     help: 'link_type 03. Tapping the push opens this e+ web page inside the app.',
     line: 'Opens web page',
+    required: true,
   },
   kogyo: {
     code: '01',
@@ -34,6 +37,7 @@ export const LINKS: Record<LinkKind, LinkMeta> = {
     placeholder: '9041480001-P0030001P021001',
     help: 'link_type 01. Tapping the push opens the show or SmaTicket bundle with this code. The API only takes a real show id.',
     line: 'Opens kogyo',
+    required: true,
   },
   word: {
     code: '02',
@@ -41,6 +45,7 @@ export const LINKS: Record<LinkKind, LinkMeta> = {
     placeholder: '2762',
     help: 'link_type 02. Tapping the push opens the subscribed word page.',
     line: 'Opens word',
+    required: true,
   },
 }
 
@@ -156,8 +161,9 @@ export function errorsFor(r: NotificationRow, date: string, now: Date = new Date
   if (!r.title.trim()) add('title', 'Enter the notification text.')
 
   const link = r.linkValue.trim()
-  if (!link) add('linkValue', `Enter the ${LINKS[r.kind].label}.`)
-  else if (r.kind === 'web' && !/^https?:\/\//.test(link)) add('linkValue', 'The URL must start with http:// or https://.')
+  if (!link) {
+    if (LINKS[r.kind].required) add('linkValue', `Enter the ${LINKS[r.kind].label}.`)
+  } else if (r.kind === 'web' && !/^https?:\/\//.test(link)) add('linkValue', 'The URL must start with http:// or https://.')
   else if (r.kind === 'word' && !/^\d+$/.test(link)) add('linkValue', 'Word ID must be numbers only.')
   return e
 }

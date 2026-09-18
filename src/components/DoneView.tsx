@@ -23,21 +23,33 @@ const tableHeaderClass =
 const tableDataCellClass = "border-b border-line-3 px-5 py-4 align-top";
 
 export function DoneView({ rows, result, server, onStartOver }: Props) {
-  const { editions, distributed } = result;
+  const { status, editions, distributed, login_ids_count } = result;
+  const created = status === "created";
 
   return (
-    <div className="max-w-[1040px] overflow-y-auto px-5 py-9 sm:px-10 sm:py-14">
+    <div className="w-full overflow-y-auto px-5 py-9 sm:px-10 sm:py-14">
       <Badge className="bg-blue-chip text-[11px] font-semibold tracking-[0.08em] text-blue-dark">
-        SCHEDULED
+        {created ? "SCHEDULED" : "VALIDATED"}
       </Badge>
       <h2 className="mt-4 mb-2 text-[28px] font-semibold tracking-tight">
-        配信予約しました — {editions.length} notification(s) scheduled
+        {created
+          ? `配信予約しました — ${editions.length} notification(s) scheduled`
+          : `Payload accepted — ${editions.length} notification(s) checked`}
       </h2>
-      <p className="mb-8 max-w-[62ch] text-[15px] leading-relaxed font-light text-ink-2">
-        The API took the delivery file. Nothing has been sent yet.{" "}
-        {distributed
-          ? "distribute_now was on, so the job ran right away and the recipients are being worked out now."
-          : "The import job checks every 10 minutes, so the push can arrive up to ten minutes after the time you set."}{" "}
+      <p className="mb-8 text-[15px] leading-relaxed font-light text-ink-2">
+        {created ? (
+          <>
+            The API took the delivery file. Nothing has been sent yet.{" "}
+            {distributed
+              ? "distribute_now was on, so the job ran right away and the recipients are being worked out now."
+              : "The import job checks every 10 minutes, so the push can arrive up to ten minutes after the time you set."}{" "}
+          </>
+        ) : (
+          <>
+            The API only checked the values. Delivery is still switched off on
+            the server, so no file was written and no push will go out.{" "}
+          </>
+        )}
         Nothing here touched PROD.
       </p>
       <Card className="overflow-x-auto">
@@ -48,7 +60,6 @@ export function DoneView({ rows, result, server, onStartOver }: Props) {
               <th className={tableHeaderClass}>Delivery ID</th>
               <th className={tableHeaderClass}>Notification</th>
               <th className={tableHeaderClass}>Opens</th>
-              <th className={tableHeaderClass}>Login IDs sent</th>
               <th className={tableHeaderClass}>File</th>
             </tr>
           </thead>
@@ -65,19 +76,15 @@ export function DoneView({ rows, result, server, onStartOver }: Props) {
                   <td className={`${tableDataCellClass} font-light`}>
                     {edition.deliv_id}
                   </td>
-                  <td className={tableDataCellClass}>
-                    {row ? row.title : "—"}
-                  </td>
+                  <td className={tableDataCellClass}>{edition.title}</td>
                   <td className={`${tableDataCellClass} font-light text-ink-2`}>
-                    {row ? `${LINKS[row.kind].line} · ${row.linkValue}` : "—"}
-                  </td>
-                  <td className={`${tableDataCellClass} font-light`}>
-                    {edition.login_ids_count} sent
+                    {row ? `${LINKS[row.kind].line} · ` : ""}
+                    {edition.link_item}
                   </td>
                   <td
                     className={`${tableDataCellClass} text-[12.5px] font-light break-all text-ink-2`}
                   >
-                    {edition.filename}
+                    {edition.filename ?? "—"}
                   </td>
                 </tr>
               );
@@ -88,9 +95,10 @@ export function DoneView({ rows, result, server, onStartOver }: Props) {
       <div className="mt-6 flex flex-wrap gap-7 text-[13px] font-light text-ink-3">
         <span>Sent via {SERVER_LABEL[server]}</span>
         <span>Environment — STAG</span>
+        <span>Login IDs sent — {login_ids_count}</span>
         <span>distribute_now — {distributed ? "yes" : "no"}</span>
       </div>
-      <p className="mt-6 max-w-[74ch] text-[13.5px] leading-relaxed font-light text-ink-2">
+      <p className="mt-6 text-[13.5px] leading-relaxed font-light text-ink-2">
         <strong className="font-semibold text-foreground">
           &ldquo;Login IDs sent&rdquo; is not a count of people.
         </strong>{" "}
