@@ -19,6 +19,7 @@ import { loadSettings, saveSettings } from '@/lib/storage'
 import {
   dateErrorFor,
   nextDelivId,
+  rowDomId,
   SERVER_LABEL,
   todayInTokyo,
   validateRows,
@@ -95,6 +96,9 @@ export function PushConsole() {
   // The payload the API said 201 to. Its 201 is empty, so this is the whole record of the run.
   const [sent, setSent] = useState<AutoAppPushPayload | null>(null)
   const [apiVerdict, setApiVerdict] = useState<ApiVerdict | null>(null)
+  // The DOM id of the first thing that needs fixing. A card below the fold gets marked red
+  // without anyone seeing it, so after a blocked Execute the page moves there.
+  const [scrollTo, setScrollTo] = useState<string | null>(null)
 
   /** Today in Tokyo, for the date box and its `min`. Only ever called after mount. */
   const resetDate = () => {
@@ -114,6 +118,22 @@ export function PushConsole() {
     setLoginIds(saved.loginIds)
     setDistributeNow(saved.distributeNow)
   }, [])
+
+  // Runs after the render that opened the collapsed cards, so the target has its final place.
+  // scrollIntoView walks nested scroll containers, so <main> on wide screens works as well as
+  // the document on narrow ones.
+  useEffect(() => {
+    if (!scrollTo) return
+    const el = document.getElementById(scrollTo)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // The first red input, so a keyboard user can start typing. The target may be that input
+    // itself (the date box) or a card holding several.
+    const INVALID = '[aria-invalid="true"]'
+    const input = el.matches(INVALID) ? el : el.querySelector<HTMLElement>(INVALID)
+    input?.focus({ preventScroll: true })
+    setScrollTo(null)
+  }, [scrollTo])
   /* oxlint-enable react/set-state-in-effect */
 
   const payload = buildPayload(rows, loginIds, date, distributeNow)
@@ -162,6 +182,10 @@ export function PushConsole() {
       setRows((rs) => rs.map((r, i) => (errs[i].length ? { ...r, collapsed: false } : r)))
       // The problems are marked on the form, which the drawer would be covering.
       setReviewDrawer(false)
+      // A bad card goes to the top of the view. The date and the recipients are covered by the
+      // note under Execute, and a card lower down is the one thing nothing else points at.
+      const firstBadRow = rows.find((_, i) => errs[i].length > 0)
+      setScrollTo(firstBadRow ? rowDomId(firstBadRow.id) : noIds ? 'ptc-recipients' : badDate ? 'ptc-date' : null)
       return
     }
     // The token field sits in the rail itself, so that stays where it is (and opens if hidden).
@@ -194,7 +218,10 @@ export function PushConsole() {
     else setReviewDrawer(false)
     toastApiError(res.error)
     setRows((rs) => rs.map((r, i) => (res.rowErrors[i]?.length ? { ...r, collapsed: false } : r)))
-    if (res.error.errors.some((e) => e.field?.startsWith('login_ids'))) setRecipientsOpen(true)
+    const aboutLoginIds = res.error.errors.some((e) => e.field?.startsWith('login_ids'))
+    if (aboutLoginIds) setRecipientsOpen(true)
+    const firstBadRow = rows.find((_, i) => res.rowErrors[i]?.length)
+    setScrollTo(firstBadRow ? rowDomId(firstBadRow.id) : aboutLoginIds ? 'ptc-recipients' : null)
   }
 
   const startOver = () => {

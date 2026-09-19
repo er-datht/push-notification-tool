@@ -51,6 +51,9 @@ export const LINKS: Record<LinkKind, LinkMeta> = {
 
 export const SUB_TYPE = 'auto_app_push'
 
+/** The DOM id of one notification card, so the page can scroll to it after a blocked Execute. */
+export const rowDomId = (rowId: number) => `ptc-row-${rowId}`
+
 export const SERVER_LABEL: Record<Server, string> = {
   express: 'ExpressJS',
   'ecs-api': 'ecs-api',

@@ -10,6 +10,7 @@ import {
   DELIV_ID_MAX,
   errorsForField,
   LINKS,
+  rowDomId,
   SUB_TYPE,
   timeLabel,
   type LinkKind,
@@ -47,7 +48,7 @@ export function NotificationRowCard({
 }: Props) {
   const L = LINKS[row.kind];
   const open = !row.collapsed;
-  const uid = `ptc-row-${row.id}`;
+  const uid = rowDomId(row.id);
   const toggle = () => onPatch("collapsed", !row.collapsed);
 
   // A `time` error is about the hour and the minute together, so both inputs get marked.
@@ -69,8 +70,10 @@ export function NotificationRowCard({
 
   return (
     <Card
+      id={uid}
       className={cn(
-        "relative",
+        // scroll-mt keeps a little air above the card when the page scrolls to it.
+        "relative scroll-mt-4",
         errors.length &&
           "before:absolute before:inset-y-0 before:left-0 before:z-[1] before:w-[3px] before:rounded-l-lg before:bg-destructive",
       )}
