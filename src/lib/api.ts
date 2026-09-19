@@ -22,38 +22,9 @@ export interface AutoAppPushPayload {
   distribute_now: boolean
 }
 
-/** One item from `data.editions[]` in a success body, in the same order the editions were sent. */
-export interface ScheduledEdition {
-  deliv_id: string
-  title: string
-  link_type: string
-  /** The cleaned-up value: a `link_type: "01"` show id comes back shortened to `904148-0001`. */
-  link_item: string
-  will_publish_at: string
-  /** `null` while the endpoint is validation-only; the file written to S3 once delivery is on. */
-  filename: string | null
-}
-
-/** The `data` of a `200` / `201` body. */
-export interface AutoAppPushResult {
-  /** `validated` = the payload was checked and nothing was written; `created` = the file is on S3. */
-  status: 'validated' | 'created'
-  date: string
-  /** How many ids we *sent*. Not how many people get the push. */
-  login_ids_count: number
-  editions: ScheduledEdition[]
-  distributed: boolean
-}
-
-/** The success envelope. `status_code` is a string that repeats the HTTP status. */
-interface SuccessBody {
-  status_code?: string
-  message?: string
-  data?: Partial<AutoAppPushResult>
-}
-
 export type SubmitResult =
-  | { ok: true; data: AutoAppPushResult }
+  /** A `201` has no body, so there is nothing to hand back: the done screen is drawn from the payload. */
+  | { ok: true }
   /**
    * `rowErrors[i]` belongs to edition `i` and `tokenError` to the API token field, the same way a
    * row error belongs to its card. `error.errors` keeps only the entries that were about neither,
@@ -185,15 +156,8 @@ export async function submitAutoAppPush(payload: AutoAppPushPayload, apiToken: s
     return fail('Could not reach this tool’s own server', 'Check that the dev server is still running, then try again.')
   }
 
-  // 200 while the endpoint is validation-only, 201 once delivery is switched on. Same body.
-  if (res.status === 200 || res.status === 201) {
-    const data = (await readBody<SuccessBody>(res))?.data
-    if (data && Array.isArray(data.editions)) return { ok: true, data: data as AutoAppPushResult }
-    return fail(
-      'The API took the run but we could not read its answer',
-      `It answered ${res.status}, so the file may already be on S3. Check the ecs-api logs before you send again.`,
-    )
-  }
+  // 201 is the success, and it is empty — zero bytes, nothing to parse. Branch on the status alone.
+  if (res.ok) return { ok: true }
 
   // 422 is validation, one entry per field. 400 is a body the API could not read at all (not
   // JSON, or a key it does not know) and uses the same envelope, so both are split the same way.

@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer'
 import { NARROW_QUERY, useMediaQuery } from '@/lib/useMediaQuery'
 import { cn } from '@/lib/utils'
-import { buildPayload, submitAutoAppPush, type AutoAppPushResult } from '@/lib/api'
+import { buildPayload, submitAutoAppPush, type AutoAppPushPayload } from '@/lib/api'
 import { dismissApiErrors, toastApiError } from '@/lib/toast'
 import { loadSettings, saveSettings } from '@/lib/storage'
 import {
@@ -92,7 +92,8 @@ export function PushConsole() {
   const [minDate, setMinDate] = useState('')
   const [distributeNow, setDistributeNow] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [result, setResult] = useState<AutoAppPushResult | null>(null)
+  // The payload the API said 201 to. Its 201 is empty, so this is the whole record of the run.
+  const [sent, setSent] = useState<AutoAppPushPayload | null>(null)
   const [apiVerdict, setApiVerdict] = useState<ApiVerdict | null>(null)
 
   /** Today in Tokyo, for the date box and its `min`. Only ever called after mount. */
@@ -181,7 +182,7 @@ export function PushConsole() {
 
     if (res.ok) {
       setReviewDrawer(false)
-      setResult(res.data)
+      setSent(payload)
       setDone(true)
       return
     }
@@ -200,7 +201,7 @@ export function PushConsole() {
     setDone(false)
     setChecked(false)
     setConfirmOpen(false)
-    setResult(null)
+    setSent(null)
     resetDate()
     // The same deliv_id twice counts as one delivery, so give every row a new one.
     setRows((rs) => rs.map((r) => ({ ...r, delivId: nextDelivId(r.delivId) })))
@@ -239,8 +240,8 @@ export function PushConsole() {
         onToggleSide={() => (narrow ? setSideDrawer((v) => !v) : setSideOpen((v) => !v))}
       />
 
-      {done && result ? (
-        <DoneView rows={rows} result={result} server={server} onStartOver={startOver} />
+      {done && sent ? (
+        <DoneView rows={rows} payload={sent} server={server} onStartOver={startOver} />
       ) : (
         <div
           className={cn(

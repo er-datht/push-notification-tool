@@ -55,12 +55,8 @@ export async function POST(req: Request) {
     ])
   }
 
-  // 404 is the one response with no body, so do not call res.json() on it.
-  if (res.status === 404) {
-    return new Response(null, { status: res.status })
-  }
-
-  // Pass everything else straight through. The client puts `error.errors[]` back into the form.
+  // 201 and 404 have no body at all, so never call res.json() here. Everything else is passed
+  // straight through: the client puts `error.errors[]` back into the form.
   const text = await res.text()
   if (!text) return new Response(null, { status: res.status })
 
