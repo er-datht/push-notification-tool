@@ -24,8 +24,6 @@ interface Props {
   onApiTokenChange: (v: string) => void
   apiTokenError: string | null
   hasErrors: boolean
-  noRecipients: boolean
-  badDate: boolean
   submitting: boolean
   onExecute: () => void
 }
@@ -49,22 +47,10 @@ export function ReviewRail({
   onApiTokenChange,
   apiTokenError,
   hasErrors,
-  noRecipients,
-  badDate,
   submitting,
   onExecute,
 }: Props) {
   const inDrawer = !!onClose
-
-  // Only says something the rest of the page cannot. A row problem already marks its own input,
-  // and a form with nothing wrong needs no note, so both stay quiet here.
-  const note = submitting
-    ? 'Writing the delivery file on ecs-api…'
-    : noRecipients
-      ? 'Add at least one recipient first.'
-      : badDate
-        ? 'Set a delivery date first.'
-        : null
 
   const foot = (
     <div className={cn('shrink-0 border-t bg-surface-alt px-4 pt-3.5 pb-4', inDrawer && 'bg-card px-5 pb-[18px]')}>
@@ -123,10 +109,6 @@ export function ReviewRail({
           <Button variant="outline" size="lg" className="mt-2.5 w-full" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-        )}
-        {note && (
-          // Every note except the "writing" one is about something that blocks the run.
-          <p className={cn('mt-2.5 text-[12.5px] leading-relaxed font-light text-ink-4', !submitting && 'text-red-ink')}>{note}</p>
         )}
       </div>
     </div>

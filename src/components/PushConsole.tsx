@@ -182,8 +182,8 @@ export function PushConsole() {
       setRows((rs) => rs.map((r, i) => (errs[i].length ? { ...r, collapsed: false } : r)))
       // The problems are marked on the form, which the drawer would be covering.
       setReviewDrawer(false)
-      // A bad card goes to the top of the view. The date and the recipients are covered by the
-      // note under Execute, and a card lower down is the one thing nothing else points at.
+      // A bad card goes to the top of the view. The date box and the Recipients card are near
+      // the top already, so they come after.
       const firstBadRow = rows.find((_, i) => errs[i].length > 0)
       setScrollTo(firstBadRow ? rowDomId(firstBadRow.id) : noIds ? 'ptc-recipients' : badDate ? 'ptc-date' : null)
       return
@@ -252,8 +252,6 @@ export function PushConsole() {
       }}
       apiTokenError={tokenError}
       hasErrors={hasErrors}
-      noRecipients={noRecipients}
-      badDate={!!dateError}
       submitting={submitting}
       onExecute={tryExecute}
     />
