@@ -13,7 +13,7 @@ type Wording = string | ((ctx: { label: string }) => string)
 const WORDING_BY_ERROR_ID: Record<string, Wording> = {
   // Whole request
   'AP-0001': 'Some values were not accepted.',
-  'AP-0002': 'Something went wrong. Please try again later or contact the administrator.',
+  'AP-0002': 'The API token was not accepted. Check it and try again.',
   'AP-0003': 'Something went wrong. Reload the page and try again.',
   'AP-0004': 'Something went wrong. Reload the page and try again.',
   // Run settings

@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
 import { RunSettings } from '@/components/RunSettings'
 import { RecipientsSection } from '@/components/RecipientsSection'
@@ -11,14 +10,15 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { DoneView } from '@/components/DoneView'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer'
-import { NARROW_QUERY, useMediaQuery } from '@/lib/useMediaQuery'
+import { useShell } from '@/lib/shell'
 import { cn } from '@/lib/utils'
-import { buildPayload, submitAutoAppPush, type AutoAppPushResult } from '@/lib/api'
+import { buildPayload, submitAutoAppPush, type AutoAppPushPayload } from '@/lib/api'
 import { dismissApiErrors, toastApiError } from '@/lib/toast'
 import { loadSettings, saveSettings } from '@/lib/storage'
 import {
   dateErrorFor,
   nextDelivId,
+  rowDomId,
   SERVER_LABEL,
   todayInTokyo,
   validateRows,
@@ -70,13 +70,16 @@ const INITIAL_ROWS: NotificationRow[] = [
 export function PushConsole() {
   const [done, setDone] = useState(false)
   const [server, setServer] = useState<Server>('ecs-api')
+  // The X-APIToken lives in state only. It is a secret, so it is never written to localStorage.
+  const [apiToken, setApiToken] = useState('')
+  // What the API said about the last token it was sent. Cleared as soon as the token changes.
+  const [apiTokenError, setApiTokenError] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
-  const [sideOpen, setSideOpen] = useState(true)
-  // Narrow screens swap the sidebar and the rail for drawers. Those have their own open flags so a
-  // rail hidden on desktop does not turn into a drawer that is already open after a resize.
-  const narrow = useMediaQuery(NARROW_QUERY)
-  const [sideDrawer, setSideDrawer] = useState(false)
+  // The push-type list is toggled from the header, which the layout renders above this page, so
+  // its open flags live in ShellProvider. The review rail's own flags stay here: a rail hidden on
+  // desktop must not turn into a drawer that is already open after a resize.
+  const { narrow, sideOpen, sideDrawer, closeSideDrawer, setSideToggle } = useShell()
   const [reviewDrawer, setReviewDrawer] = useState(false)
   const [recipientsOpen, setRecipientsOpen] = useState(false)
   const [checked, setChecked] = useState(false)
@@ -88,8 +91,12 @@ export function PushConsole() {
   const [minDate, setMinDate] = useState('')
   const [distributeNow, setDistributeNow] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [result, setResult] = useState<AutoAppPushResult | null>(null)
+  // The payload the API said 201 to. Its 201 is empty, so this is the whole record of the run.
+  const [sent, setSent] = useState<AutoAppPushPayload | null>(null)
   const [apiVerdict, setApiVerdict] = useState<ApiVerdict | null>(null)
+  // The DOM id of the first thing that needs fixing. A card below the fold gets marked red
+  // without anyone seeing it, so after a blocked Execute the page moves there.
+  const [scrollTo, setScrollTo] = useState<string | null>(null)
 
   /** Today in Tokyo, for the date box and its `min`. Only ever called after mount. */
   const resetDate = () => {
@@ -109,6 +116,22 @@ export function PushConsole() {
     setLoginIds(saved.loginIds)
     setDistributeNow(saved.distributeNow)
   }, [])
+
+  // Runs after the render that opened the collapsed cards, so the target has its final place.
+  // scrollIntoView walks nested scroll containers, so <main> on wide screens works as well as
+  // the document on narrow ones.
+  useEffect(() => {
+    if (!scrollTo) return
+    const el = document.getElementById(scrollTo)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // The first red input, so a keyboard user can start typing. The target may be that input
+    // itself (the date box) or a card holding several.
+    const INVALID = '[aria-invalid="true"]'
+    const input = el.matches(INVALID) ? el : el.querySelector<HTMLElement>(INVALID)
+    input?.focus({ preventScroll: true })
+    setScrollTo(null)
+  }, [scrollTo])
   /* oxlint-enable react/set-state-in-effect */
 
   const payload = buildPayload(rows, loginIds, date, distributeNow)
@@ -127,9 +150,11 @@ export function PushConsole() {
 
   const noRecipients = checked && loginIds.length === 0
   const dateError = checked ? dateErrorFor(date) : null
-  // Only form problems block Execute. A bad token or a host we cannot reach is worth trying
+  const tokenMissing = server === 'ecs-api' && !apiToken.trim()
+  const tokenError = checked && tokenMissing ? 'Enter the API token.' : apiTokenError
+  // Only form problems block Execute. A rejected token or a host we cannot reach is worth trying
   // again, so it must not turn into a "fix the cards" note when the cards are already fine.
-  const hasErrors = noRecipients || !!dateError || rowErrors.some((e) => e.length > 0)
+  const hasErrors = noRecipients || !!dateError || (checked && tokenMissing) || rowErrors.some((e) => e.length > 0)
 
   const patchRow = <K extends keyof NotificationRow>(id: number, field: K, value: NotificationRow[K]) =>
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, [field]: value } : r)))
@@ -148,12 +173,22 @@ export function PushConsole() {
     setChecked(true)
     // A fresh Execute asks for a fresh verdict, even on the same payload.
     setApiVerdict(null)
+    setApiTokenError(null)
     dismissApiErrors()
     if (errs.some((e) => e.length > 0) || noIds || badDate) {
       if (noIds) setRecipientsOpen(true)
       setRows((rs) => rs.map((r, i) => (errs[i].length ? { ...r, collapsed: false } : r)))
       // The problems are marked on the form, which the drawer would be covering.
       setReviewDrawer(false)
+      // A bad card goes to the top of the view. The date box and the Recipients card are near
+      // the top already, so they come after.
+      const firstBadRow = rows.find((_, i) => errs[i].length > 0)
+      setScrollTo(firstBadRow ? rowDomId(firstBadRow.id) : noIds ? 'ptc-recipients' : badDate ? 'ptc-date' : null)
+      return
+    }
+    // The token field sits in the rail itself, so that stays where it is (and opens if hidden).
+    if (tokenMissing) {
+      setRailOpen(true)
       return
     }
     setConfirmOpen(true)
@@ -164,27 +199,37 @@ export function PushConsole() {
     setSubmitting(true)
     saveSettings({ loginIds, distributeNow })
 
-    const res = await submitAutoAppPush(payload)
+    const res = await submitAutoAppPush(payload, apiToken)
     setSubmitting(false)
 
-    setReviewDrawer(false)
     if (res.ok) {
-      setResult(res.data)
+      setReviewDrawer(false)
+      setSent(payload)
       setDone(true)
+      // The done screen has no push-type list, so the header's menu button goes with it.
+      setSideToggle(false)
       return
     }
 
     setApiVerdict({ payloadKey, rowErrors: res.rowErrors })
+    setApiTokenError(res.tokenError)
+    // A rejected token is marked in the rail, so keep that in view; anything else is on the form.
+    if (res.tokenError) setRailOpen(true)
+    else setReviewDrawer(false)
     toastApiError(res.error)
     setRows((rs) => rs.map((r, i) => (res.rowErrors[i]?.length ? { ...r, collapsed: false } : r)))
-    if (res.error.errors.some((e) => e.field?.startsWith('login_ids'))) setRecipientsOpen(true)
+    const aboutLoginIds = res.error.errors.some((e) => e.field?.startsWith('login_ids'))
+    if (aboutLoginIds) setRecipientsOpen(true)
+    const firstBadRow = rows.find((_, i) => res.rowErrors[i]?.length)
+    setScrollTo(firstBadRow ? rowDomId(firstBadRow.id) : aboutLoginIds ? 'ptc-recipients' : null)
   }
 
   const startOver = () => {
     setDone(false)
+    setSideToggle(true)
     setChecked(false)
     setConfirmOpen(false)
-    setResult(null)
+    setSent(null)
     resetDate()
     // The same deliv_id twice counts as one delivery, so give every row a new one.
     setRows((rs) => rs.map((r) => ({ ...r, delivId: nextDelivId(r.delivId) })))
@@ -201,24 +246,24 @@ export function PushConsole() {
       distributeNow={distributeNow}
       server={server}
       onServerChange={setServer}
+      apiToken={apiToken}
+      onApiTokenChange={(v) => {
+        setApiToken(v)
+        setApiTokenError(null)
+      }}
+      apiTokenError={tokenError}
       hasErrors={hasErrors}
-      noRecipients={noRecipients}
-      badDate={!!dateError}
       submitting={submitting}
       onExecute={tryExecute}
     />
   )
 
   return (
-    <div className={cn('flex flex-col bg-background', narrow ? 'min-h-screen' : 'h-screen overflow-hidden')}>
-      <Header
-        showSideToggle={!done}
-        sideOpen={narrow ? sideDrawer : sideOpen}
-        onToggleSide={() => (narrow ? setSideDrawer((v) => !v) : setSideOpen((v) => !v))}
-      />
-
-      {done && result ? (
-        <DoneView rows={rows} result={result} server={server} onStartOver={startOver} />
+    // Fills what the header leaves. Wide screens scroll per column; narrow ones scroll the whole
+    // page here, which keeps the bottom action bar sticky to this box.
+    <div className={cn('flex min-h-0 flex-1 flex-col', narrow ? 'overflow-y-auto' : 'overflow-hidden')}>
+      {done && sent ? (
+        <DoneView rows={rows} payload={sent} server={server} onStartOver={startOver} />
       ) : (
         <div
           className={cn(
@@ -312,7 +357,7 @@ export function PushConsole() {
 
       {narrow && !done && (
         <>
-          <Drawer direction="left" open={sideDrawer} onOpenChange={(o) => !o && setSideDrawer(false)}>
+          <Drawer direction="left" open={sideDrawer} onOpenChange={(o) => !o && closeSideDrawer()}>
             <DrawerContent
               showCloseButton
               className="bg-sidebar text-sidebar-foreground [&_[data-slot=drawer-close]]:text-sidebar-foreground [&_[data-slot=drawer-close]]:hover:bg-sidebar-accent [&_[data-slot=drawer-close]]:hover:text-white"

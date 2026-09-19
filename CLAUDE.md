@@ -27,24 +27,28 @@ Only **Auto App Push** works. The other push types in the sidebar are grey and d
 
 ## Talking to the API
 
-`docs/API-DOC-auto-app-push.md` is the contract. `execute()` in `PushConsole.tsx` builds the payload with `buildPayload` and posts it through `submitAutoAppPush` (`src/lib/api.ts`) to our own route handler at `src/app/api/push/auto-app-push/route.ts`, which adds `X-APIToken` and forwards to `POST {ECS_API_URL}/api/test_notification/auto_app_pushes`. When the route handler itself has a problem (env not set, body not JSON, host unreachable) it answers with the same `{ error: { code, title, message, errors[] } }` object as the API's failures (the house shape from the EMO API Specification Summary sheet, repeated in `docs/API-DOC-auto-app-push.md`) — `title` is the headline, `message` the sentence under it, `errors[]` raw detail — so `src/lib/api.ts` reads both the same way.
+`docs/API-DOC-auto-app-push.md` is the contract. `execute()` in `PushConsole.tsx` builds the payload with `buildPayload` and posts it through `submitAutoAppPush` (`src/lib/api.ts`) to our own route handler at `src/app/api/push/auto-app-push/route.ts`, which forwards it to `POST {ECS_API_URL}/api/test_notification/auto_app_pushes`. When the route handler itself has a problem (env not set, no token on the request, body not JSON, host unreachable) it answers with the same `{ error: { code, title, message, errors[] } }` object as the API's failures (the house shape from the EMO API Specification Summary sheet, repeated in `docs/API-DOC-auto-app-push.md`) — `title` is the headline, `message` the sentence under it, `errors[]` raw detail — so `src/lib/api.ts` reads both the same way.
 
-**The browser must never call ecs-api directly.** The token is a shared secret and that path is not in the API's CORS allowlist. `ECS_API_URL` and `TEST_NOTIFICATION_API_TOKEN` are read only inside the route handler and must never be prefixed `NEXT_PUBLIC_`. Copy `.env.example` to `.env.local` to run against staging.
+**The token is typed in, not configured.** The `X-APIToken` is the "API token" field under the `ecs-api` option in the review rail (`ReviewRail.tsx`). It is required, lives only in `PushConsole` state (`apiToken`) — never in `localStorage`, never in env — and travels as an `X-APIToken` header on the request to our route handler, which passes it through unchanged. A `401` marks that field (`tokenError` on the failed `SubmitResult`), the way a `422` marks a card, and keeps the rail open so the tester can fix it. `tryExecute` checks the token after the form, because the field is in the rail, not on the form the drawer would be covering.
 
-Every body follows the EMO envelope (see the Responses section of `docs/API-DOC-auto-app-push.md`): success is `{ status_code, message, data }`, failure is `{ error: { error_id, code, title, message, errors[] } }`. Four responses matter, and `src/lib/api.ts` is the only place that branches on them:
+**The browser must never call ecs-api directly.** That path is not in the API's CORS allowlist. `ECS_API_URL` is read only inside the route handler and must never be prefixed `NEXT_PUBLIC_`. Copy `.env.example` to `.env.local` to run against staging.
 
-- **200 / 201** — `data.status` is `validated` (the endpoint is validation-only for now: nothing written, `filename` null, HTTP 200) or `created` (the delivery file reached S3, HTTP 201). Nothing has been sent either way. `DoneView` says *checked* or *scheduled*, never *sent*, and shows `will_publish_at` / `filename` / the cleaned-up `link_item` from `data.editions[]` rather than the local rows. `login_ids_count` sits on `data`, not per edition.
+**Success has no body.** A `201` is zero bytes; only failures carry the EMO envelope `{ error: { error_id, code, title, message, errors[] } }` (see the Responses section of `docs/API-DOC-auto-app-push.md`). Four responses matter, and `src/lib/api.ts` is the only place that branches on them:
+
+- **201** — accepted, empty. Never parse it. The API writes the delivery file on the server and (while the S3 upload is switched off) stops there: nothing is sent, nothing is echoed back — no id, no filename, no resolved time. `PushConsole` keeps the exact payload it posted (`sent`) and `DoneView` draws the confirmation from that: the time from `date` + `publish_hour_min`, and a `link_type: "01"` show id reduced with `shortShowId` (`9041480001-P0030001P021001` → `904148-0001`) the way the server does it internally. `DoneView` says *scheduled* (配信予約しました), never *sent*, and says out loud that the upload is off.
 - **422 / 400** — `error.errors[]` is a flat list of `{ error_id, field, message }`; an entry about one edition has a `field` like `editions[n].deliv_id`. `splitErrors` routes those to the matching card and keeps the rest in `error.errors` for the toast, which shows `error.title`, `error.message` and that remainder. 422 is validation; 400 is a body the API could not read (not JSON, or an unknown key — extra keys are rejected, not ignored). Row errors are stored in `PushConsole` as an `ApiVerdict` together with the JSON of the exact payload they answered, and are merged into the `rowErrors` memo only while the current payload still matches that key — so the verdict drops out on its own once anything in the payload changes, without every input handler having to clear it. Only `tryExecute` resets it explicitly, so a re-run of the same payload gets a fresh answer.
-- **401** — same error envelope (`AP-0002`); the SSM hint goes to the browser console, not the toast.
-- **404** — **empty body**, the only response without one. Never call `res.json()` on it, in the route handler or the client.
+- **401** — same error envelope (`AP-0002`). The API token field turns red, the toast says the token was not accepted, and the SSM hint goes to the browser console.
+- **404** — empty, like the 201. Never call `res.json()` on either, in the route handler or the client.
 
-`data.login_ids_count` echoes what was sent; it is not a recipient count. IDs are filtered against `push_score_weekly` later with no error anywhere, which `DoneView` spells out.
+Login IDs are filtered against `push_score_weekly` later with no error anywhere, which `DoneView` spells out. `distribute_now` is accepted but does nothing on the server until the upload is back; the checkbox and `DoneView` both say so.
 
 ## How the code is put together
 
 ### All state sits in `PushConsole.tsx`
 
-`src/app/page.tsx` is a server component that only renders `<PushConsole />`. `PushConsole` is marked `'use client'`, and rows, recipients, the chosen server, which panels are open, the `checked` flag — all of it is `useState` inside it. The other files in `src/components/` only take props and call functions back up. Don't add local state that copies page state. The one fine exception is the text box in `RecipientsSection`, which is only a draft value.
+`src/app/page.tsx` is a server component that only renders `<PushConsole />`. `PushConsole` is marked `'use client'`, and rows, recipients, the chosen server, the API token, which panels are open, the `checked` flag — all of it is `useState` inside it. The other files in `src/components/` only take props and call functions back up. Don't add local state that copies page state. The one fine exception is the text box in `RecipientsSection`, which is only a draft value.
+
+The one thing that lives above the page is the push-type list's open flag. `Header` is rendered by `src/app/layout.tsx`, not by the page, so its menu button cannot get a prop from `PushConsole`; `ShellProvider` (`src/components/ShellProvider.tsx`, wrapped around `<Header />` and `{children}` in the layout) holds `narrow`, `sideOpen`, `sideDrawer` and `sideToggle`, and both `Header` and `PushConsole` read them through `useShell()` (`src/lib/shell.ts`). `PushConsole` turns `sideToggle` off when it shows `DoneView` (no list there) and back on in `startOver`. Keep the provider to that — don't grow it into a store.
 
 ### `src/lib/types.ts` holds the shared facts
 
@@ -99,9 +103,11 @@ react-toastify is the one thing still themed with plain CSS: its `.Toastify__*` 
 
 ### Layout and the narrow-screen drawers
 
-`useMediaQuery(NARROW_QUERY)` (`src/lib/useMediaQuery.ts`, 1180px) decides which shell `PushConsole` renders. It returns `false` during hydration on purpose, so the prerendered HTML always matches; the narrow layout arrives one frame after mount.
+`useMediaQuery(NARROW_QUERY)` (`src/lib/useMediaQuery.ts`, 1180px), read once in `ShellProvider` and handed down as `narrow`, decides which shell `PushConsole` renders. It returns `false` during hydration on purpose, so the prerendered HTML always matches; the narrow layout arrives one frame after mount.
 
-Wide: a three-column CSS grid — `--side-track` (232px, or 0 with the sidebar closed, in which case the `<Sidebar>` is not rendered at all), the main column, and `--rail-track` (400px, or 64px when the rail is collapsed to its "Show review" stub). The app is `h-screen` and each column scrolls on its own.
+`<body>` is `h-dvh flex flex-col`: the header takes its own height and the page box under it (`min-h-0 flex-1`) fills the rest. On wide screens that box is `overflow-hidden` and each column scrolls on its own; on narrow ones the box itself is `overflow-y-auto`, so the document never scrolls and the bottom action bar sticks to the box.
+
+Wide: a three-column CSS grid — `--side-track` (232px, or 0 with the sidebar closed, in which case the `<Sidebar>` is not rendered at all), the main column, and `--rail-track` (400px, or 64px when the rail is collapsed to its "Show review" stub). Each column scrolls on its own.
 
 Narrow: a single column with a sticky action bar at the bottom (run summary + "Review & execute"). The sidebar becomes a left `Sheet` opened by the hamburger, and the whole `ReviewRail` renders inside a right `Sheet` with `onClose` set, which switches it to drawer mode (no Hide toggle, a Cancel button under Execute). `tryExecute` closes that sheet when validation fails, because the problems are marked on the form it would be covering.
 

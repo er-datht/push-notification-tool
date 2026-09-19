@@ -31,7 +31,7 @@ export function RecipientsSection({
   };
 
   return (
-    <Card className="mt-8">
+    <Card id="ptc-recipients" className="mt-8">
       <button
         className="flex w-full items-center gap-3 rounded-lg px-5.5 py-[18px] text-left transition-colors hover:bg-[#fafbfc] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         onClick={onToggle}

@@ -6,15 +6,16 @@ API reference for the push notification test tool. Hand-off document for the fro
 - **Branch:** `feature/create_api_for_auto_app_push_notification`
 - **Environment:** staging only
 
-> ### ⚠️ Validation only for now
+> ### ⚠️ A `201` does not mean a push was sent
 >
-> The endpoint currently **checks the payload and nothing else** — it does not write the CSV to
-> S3 and no push is ever sent. That is why a valid request answers `200`, not `201`: nothing was
-> created. The delivery code is written and commented out in the controller, and turning it back
-> on only changes `data.status` (`validated` → `created`), `data.editions[].filename`
-> (`null` → the real name) and the status code (`200` → `201`).
+> The endpoint validates the payload and **writes the CSV delivery file** — but the upload of
+> that file to S3 is still switched off server-side. Nothing is imported and no push is ever
+> delivered. A valid request answers `201 Created` with an **empty body**.
 >
-> Build the form against this contract now; it does not change when delivery is switched on.
+> Turning the upload back on is a one-line change in `lib/push_test/common.rb` and **does not
+> change this contract**: still `201`, still no body. So build the form against what is written
+> here now — nothing about it changes when delivery goes live.
+>
 > `TEST_NOTIFICATION_API_TOKEN` also still needs to be added to SSM at `/epica/stg/api` before
 > the endpoint can answer anything but `401` on staging.
 
@@ -60,14 +61,19 @@ export async function POST(req: Request) {
     },
   );
 
-  // 404 has no body — do not call res.json() on it
-  if (res.status === 404) {
+  // 201 (success) and 404 (disabled) both have empty bodies —
+  // calling res.json() on either will throw.
+  if (res.status === 201 || res.status === 404) {
     return new Response(null, { status: res.status });
   }
 
+  // Everything else is an error envelope.
   return Response.json(await res.json(), { status: res.status });
 }
 ```
+
+**Only failures carry a body.** The success path returns nothing, so branch on the status code,
+never on the parsed body.
 
 The env var must **not** be prefixed `NEXT_PUBLIC_` — that would inline the token into the
 client bundle.
@@ -76,12 +82,12 @@ client bundle.
 
 ## Request body
 
-| Field            | Type       | Required | Notes                                                                                                    |
-| ---------------- | ---------- | -------- | -------------------------------------------------------------------------------------------------------- |
-| `date`           | `string`   | No       | `YYYY-MM-DD`. Defaults to today when omitted.                                                            |
-| `login_ids`      | `string[]` | **Yes**  | Who receives the push. Must not be empty. Send as strings — leading zeros matter.                        |
-| `editions`       | `object[]` | **Yes**  | One entry per notification. Must not be empty.                                                           |
-| `distribute_now` | `boolean`  | No       | Default `false`. Skips the wait for the next 10-minute tick. See [Stage 1](#what-happens-after-the-201). |
+| Field            | Type       | Required | Notes                                                                                                                                                                                |
+| ---------------- | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `date`           | `string`   | No       | `YYYY-MM-DD`. Defaults to today when omitted.                                                                                                                                        |
+| `login_ids`      | `string[]` | **Yes**  | Who receives the push. Must not be empty. Send as strings — leading zeros matter.                                                                                                    |
+| `editions`       | `object[]` | **Yes**  | One entry per notification. Must not be empty.                                                                                                                                       |
+| `distribute_now` | `boolean`  | No       | Default `false`. Still accepted, but **currently does nothing** — the worker it triggers has nothing to import while the S3 upload is off. See [Stage 1](#what-happens-after-a-201). |
 
 ### Each entry in `editions`
 
@@ -143,59 +149,37 @@ X-APIToken: <token>
 
 ## Responses
 
-Every body follows the common envelope of the **[EMO] API Specification Summary** sheet, so this
-endpoint parses the same way as the rest of the EMO APIs:
+**Success has no body. Only failures do.**
 
-|         | Shape                                                                      |
-| ------- | -------------------------------------------------------------------------- |
-| Success | `{ "status_code": "200", "message": "OK", "data": { … } }`                 |
-| Failure | `{ "error": { "error_id", "code", "title", "message", "errors": [ … ] } }` |
+|                 | Shape                                                                      |
+| --------------- | -------------------------------------------------------------------------- |
+| Success (`201`) | _empty_ — zero bytes                                                       |
+| Failure         | `{ "error": { "error_id", "code", "title", "message", "errors": [ … ] } }` |
 
-`status_code` is a **string** and always matches the HTTP status. All keys are `snake_case` and
-all datetimes are ISO 8601.
+The failure envelope is the one from the **[EMO] API Specification Summary** sheet, so error
+handling is identical to the rest of the EMO APIs. All keys are `snake_case`.
 
-**`404` is the one exception — it has no body at all.** Calling `res.json()` on it will throw.
+**`201` and `404` have no body at all.** Calling `res.json()` on either will throw — branch on
+the status code first.
 
-### `200 OK` — payload accepted
+### `201 Created` — accepted
 
-```json
-{
-  "status_code": "200",
-  "message": "OK",
-  "data": {
-    "status": "validated",
-    "date": "2026-01-21",
-    "login_ids_count": 2,
-    "editions": [
-      {
-        "deliv_id": "H020064377",
-        "title": "イープラスのWEBページへ遷移します。",
-        "link_type": "03",
-        "link_item": "https://eplus.jp/",
-        "will_publish_at": "2026-01-21T15:30:00+09:00",
-        "filename": null
-      }
-    ],
-    "distributed": false
-  }
-}
+```http
+HTTP/1.1 201 Created
+Content-Length: 0
 ```
 
-| Field                             | Notes                                                                                                                                                  |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `data.status`                     | `validated` while delivery is off, `created` once it is on.                                                                                            |
-| `data.date`                       | The date the times are anchored to — today when you omitted it.                                                                                        |
-| `data.login_ids_count`            | How many ids you **sent** — not how many people will receive it. See [caveats](#things-that-will-bite).                                                |
-| `data.editions[]`                 | One object per edition, in the order sent.                                                                                                             |
-| `data.editions[].link_item`       | The **cleaned-up** value: a `link_type: "01"` show id comes back shortened to `904148-0001`. Echo this back to the tester rather than what they typed. |
-| `data.editions[].will_publish_at` | ISO 8601 with the `+09:00` offset.                                                                                                                     |
-| `data.editions[].filename`        | `null` today. The delivery file written to S3 once delivery is on.                                                                                     |
-| `data.distributed`                | Whether `distribute_now` was honoured.                                                                                                                 |
+That is the whole response. There is deliberately nothing to read:
 
-### `201 Created` — once delivery is switched on
+- The endpoint creates a **file**, not a database record, so there is no id to hand back.
+- Everything else you might want to echo — the times, the titles, the ids — is what you just
+  sent. Render the confirmation from your own form state.
 
-Identical body, with `status_code` `"201"`, `data.status` `"created"` and a real
-`data.editions[].filename`. Treat `200` and `201` the same way in the UI.
+One consequence worth planning for: the server reduces a `link_type: "01"` show id internally
+(`9041480001-P0030001P021001` → `904148-0001`) and **no longer reports that back**. If the
+tester needs to see the reduced value, compute it client-side (first 6 digits, `-`, then the 4
+digits after `P003`) or ask a backend engineer to read the generated CSV on the server at
+`tmp/push_test/<YYYYMMDD>/app_push/`.
 
 ### `422 Unprocessable Entity` — validation failed
 
@@ -286,39 +270,65 @@ than wrong in your environment.
 
 ### `404 Not Found`
 
-**Empty body — the only response without one.** The endpoint is disabled on production by
-design, and answers with nothing at all so it cannot be told apart from a route that does not
-exist. Seeing this on staging means the deploy has not landed yet.
+**Empty body**, like the `201`. The endpoint is disabled on production by design, and answers
+with nothing at all so it cannot be told apart from a route that does not exist. Seeing this on
+staging means the deploy has not landed yet.
+
+### `500 Internal Server Error`
+
+The payload was fine but writing the delivery file failed — a full or unwritable disk on the
+server. Same envelope as every other error:
+
+```json
+{
+  "error": {
+    "error_id": "AP-0005",
+    "code": "INTERNAL_ERROR",
+    "title": "Internal error",
+    "message": "The request was valid but the push could not be created. (AP-0005)",
+    "errors": []
+  }
+}
+```
+
+Nothing the tester can fix — surface it as "server error, contact the backend team" and do not
+retry automatically.
 
 ---
 
-## What happens after a `data.status` of `created`
+## What happens after a `201`
 
-Nothing yet, while the endpoint is validation-only — a `validated` response means the payload
-was accepted and no file was written.
+**Today: nothing.** The delivery file is written on the server but the upload to S3 is switched
+off, so none of the stages below ever start. No push will arrive, however long you wait.
 
-Once delivery is switched on, a `created` response means **a file reached S3** — nothing more.
+Once the upload is switched back on, a `201` means **a file reached S3** — nothing more.
 Delivery then runs through four asynchronous stages after the request has already returned.
 
-| #   | Stage               | When                          | What                                                                                                                                                                                |
-| --- | ------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Pickup              | Every 10 min, 06:00–22:50 JST | A scheduled worker scans S3 and imports files due within 2 hours and inside 08:00–22:00. Until a tick runs, nothing has happened. `distribute_now: true` triggers this immediately. |
-| 2   | Edition created     | Seconds after pickup          | The file is parsed and a delivery record is stored.                                                                                                                                 |
-| 3   | Recipients resolved | Seconds later                 | Each login_id is matched to a user who is an active customer **and** has `push_score_weekly` enabled. Anyone failing either check is dropped here.                                  |
-| 4   | Push sent           | At the requested time         | Notifications are batched and delivered. If pickup ran late, delivery slips past the requested time rather than being skipped.                                                      |
+| #   | Stage               | When                          | What                                                                                                                                                                                     |
+| --- | ------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Pickup              | Every 10 min, 06:00–22:50 JST | A scheduled worker scans S3 and imports files due within 2 hours and inside 08:00–22:00. Until a tick runs, nothing has happened. `distribute_now: true` would trigger this immediately. |
+| 2   | Edition created     | Seconds after pickup          | The file is parsed and a delivery record is stored.                                                                                                                                      |
+| 3   | Recipients resolved | Seconds later                 | Each login_id is matched to a user who is an active customer **and** has `push_score_weekly` enabled. Anyone failing either check is dropped here.                                       |
+| 4   | Push sent           | At the requested time         | Notifications are batched and delivered. If pickup ran late, delivery slips past the requested time rather than being skipped.                                                           |
 
 ---
 
 ## Things that will bite
 
-### A success response does not mean the push was sent
+### A `201` does not mean the push was sent
 
-Today it means the payload passed validation; once delivery is on it means the file was
-accepted. Neither is a send. Word the success state as **scheduled**, not sent —
-「配信予約しました」rather than「送信しました」. Otherwise the tester will report a bug when
-nothing arrives for ten minutes.
+It means the delivery file was written. It is not a send — and right now it is not even a
+scheduling, because the upload to S3 is off and nothing downstream ever runs.
 
-`data.status` is the honest signal: `validated` = checked only, `created` = file on S3.
+Word the success state as **scheduled**, not sent — 「配信予約しました」rather than
+「送信しました」. Otherwise the tester will report a bug when nothing arrives for ten minutes.
+While the upload is still off, consider saying so explicitly in the success copy.
+
+### There is no way to confirm anything from the response
+
+The `201` is empty, so the API gives you no id, no filename, and no server-side echo of what it
+understood. If something looks wrong, the only way to check is for a backend engineer to read
+the generated CSV on the server. Keep a local record of what was submitted.
 
 ### login_ids are filtered later, silently
 
@@ -332,11 +342,14 @@ worth raising now rather than after launch.
 ### Reusing a `deliv_id` is treated as the same delivery
 
 Resending requires a new `deliv_id` **and** a new time. Consider generating or incrementing it
-in the form rather than making the tester retype it.
+in the form rather than making the tester retype it. A repeat also overwrites the previous
+delivery file on the server, silently and with a `201`.
 
-### `login_ids_count` is not a recipient count
+### Only one tester at a time
 
-It echoes the length of the array you sent. See above.
+The server keeps `date` and `login_ids` in process-level state while it builds the files. Two
+submissions landing in the same second can mix each other's values. Not something the form can
+guard against — just do not run a second tester in parallel.
 
 ### Extra keys are rejected, not ignored
 
@@ -354,22 +367,28 @@ Things the UI should do, derived from the above:
 - [ ] Per-edition fields: time, `deliv_id`, `title`, `link_type` select, `link_item`
 - [ ] `link_item` label and placeholder change with the selected `link_type`
 - [ ] Time picker constrained to 08:00–22:00 and ≤ 2 hours ahead
-- [ ] Optional `distribute_now` toggle ("配信を今すぐ実行")
+- [ ] Optional `distribute_now` toggle ("配信を今すぐ実行") — note it currently does nothing
 - [ ] Remember the last-used `login_ids` and settings between submissions
 - [ ] Map `error.errors[].field` back onto the matching form control, keyed by `error_id`
 - [ ] Show `error.message` as the banner and `errors[].message` per field
 - [ ] Send only the documented keys — an unknown one is a `400`
-- [ ] Handle `404` without parsing a body (every other status has one)
-- [ ] Read the resource from `data`, not from the top level
-- [ ] Success copy says _scheduled_, showing `data.editions[].will_publish_at`
+- [ ] **Branch on the status code, never on a parsed body** — `201` and `404` have none
+- [ ] Treat `201` as success without reading a response; render the confirmation from the
+      submitted form state, not from the server
+- [ ] Success copy says _scheduled_, showing the time you submitted
+- [ ] Keep a local history of submissions — the API cannot tell you what it received
 
 ---
 
 ## Contacts / source of truth
 
-|                                      |                                                                             |
-| ------------------------------------ | --------------------------------------------------------------------------- |
-| Controller & response envelope       | `app/controllers/epica/api/test_notification/auto_app_pushes_controller.rb` |
-| Validation, error ids & file writing | `lib/push_test/auto_app_push.rb` — `VALIDATION_ERRORS` is the catalog above |
-| Route                                | `config/routes.rb` — `namespace :test_notification`                         |
-| Spec                                 | `spec/requests/epica/api/test_notification/auto_app_pushes_spec.rb`         |
+|                                               |                                                                                                                        |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Controller, error envelope **and validation** | `app/controllers/epica/api/test_notification/auto_app_pushes_controller.rb` — `VALIDATION_ERRORS` is the catalog above |
+| File writing, and the commented-out S3 upload | `lib/push_test/common.rb` — `create_auto_app_push_edition`                                                             |
+| Route                                         | `config/routes.rb` — `namespace :test_notification`                                                                    |
+| Spec                                          | `spec/requests/epica/api/test_notification/auto_app_pushes_spec.rb`                                                    |
+
+> `lib/push_test/auto_app_push.rb`, referenced by earlier versions of this document, has been
+> removed. It duplicated `PushTest::Common`; the endpoint now calls that shared module directly
+> and holds the validation rules itself.

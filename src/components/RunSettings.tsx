@@ -67,8 +67,8 @@ export function RunSettings({
             配信を今すぐ実行 — run the job right away
             <br />
             <span className="text-xs font-light text-ink-4">
-              distribute_now. Skips the 10-minute wait. Leave it off to test the
-              normal path.
+              distribute_now. Skips the 10-minute wait once delivery is on.
+              The server accepts it but it does nothing yet.
             </span>
           </span>
         </label>

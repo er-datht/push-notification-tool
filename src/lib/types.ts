@@ -51,6 +51,9 @@ export const LINKS: Record<LinkKind, LinkMeta> = {
 
 export const SUB_TYPE = 'auto_app_push'
 
+/** The DOM id of one notification card, so the page can scroll to it after a blocked Execute. */
+export const rowDomId = (rowId: number) => `ptc-row-${rowId}`
+
 export const SERVER_LABEL: Record<Server, string> = {
   express: 'ExpressJS',
   'ecs-api': 'ecs-api',
@@ -90,11 +93,15 @@ export function tokyoEpoch(date: string, hour: number, min: number): number | nu
   return utc - JST_OFFSET_MS
 }
 
-/** `will_publish_at` comes back with a +09:00 offset. We read the text as it is, so `Date`
- *  cannot redraw it in the browser's timezone. */
-export function formatPublishAt(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso)
-  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]} JST` : iso
+/**
+ * What the server makes of a `link_type: "01"` show id: the first 6 digits (興行コード), a dash,
+ * and the 4 digits after `P003` (興行サブコード). `9041480001-P0030001P021001` → `904148-0001`.
+ * The 201 is empty, so this is the only way to show the tester the reduced value. A value that
+ * does not fit the pattern is given back as typed.
+ */
+export function shortShowId(item: string): string {
+  const m = /^(\d{6})\d*-P003(\d{4})/.exec(item.trim())
+  return m ? `${m[1]}-${m[2]}` : item
 }
 
 /** Adds 1 to the number at the end of a delivery ID, so the next run gets a new one. */

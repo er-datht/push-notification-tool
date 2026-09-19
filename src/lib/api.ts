@@ -1,8 +1,11 @@
 import { bannerFor, linkLabelFor, messageFor } from '@/lib/apiMessages'
 import { LINKS, type NotificationRow, type RowError, type RowField } from '@/lib/types'
 
-/** Our own route handler. It keeps the X-APIToken, so the browser never sees it. */
+/** Our own route handler. It adds nothing of its own: the token goes with each request. */
 const AUTO_APP_PUSH_ROUTE = '/api/push/auto-app-push'
+
+/** The header the route handler forwards to the API unchanged. */
+const TOKEN_HEADER = 'X-APIToken'
 
 export interface EditionPayload {
   publish_hour_min: [number, number]
@@ -19,43 +22,15 @@ export interface AutoAppPushPayload {
   distribute_now: boolean
 }
 
-/** One item from `data.editions[]` in a success body, in the same order the editions were sent. */
-export interface ScheduledEdition {
-  deliv_id: string
-  title: string
-  link_type: string
-  /** The cleaned-up value: a `link_type: "01"` show id comes back shortened to `904148-0001`. */
-  link_item: string
-  will_publish_at: string
-  /** `null` while the endpoint is validation-only; the file written to S3 once delivery is on. */
-  filename: string | null
-}
-
-/** The `data` of a `200` / `201` body. */
-export interface AutoAppPushResult {
-  /** `validated` = the payload was checked and nothing was written; `created` = the file is on S3. */
-  status: 'validated' | 'created'
-  date: string
-  /** How many ids we *sent*. Not how many people get the push. */
-  login_ids_count: number
-  editions: ScheduledEdition[]
-  distributed: boolean
-}
-
-/** The success envelope. `status_code` is a string that repeats the HTTP status. */
-interface SuccessBody {
-  status_code?: string
-  message?: string
-  data?: Partial<AutoAppPushResult>
-}
-
 export type SubmitResult =
-  | { ok: true; data: AutoAppPushResult }
+  /** A `201` has no body, so there is nothing to hand back: the done screen is drawn from the payload. */
+  | { ok: true }
   /**
-   * `rowErrors[i]` belongs to edition `i`. `error.errors` keeps only the entries that were not
-   * about a row, so the toast never repeats what a card already shows.
+   * `rowErrors[i]` belongs to edition `i` and `tokenError` to the API token field, the same way a
+   * row error belongs to its card. `error.errors` keeps only the entries that were about neither,
+   * so the toast never repeats what an input already shows.
    */
-  | { ok: false; rowErrors: RowError[][]; error: ApiError }
+  | { ok: false; rowErrors: RowError[][]; tokenError: string | null; error: ApiError }
 
 /** One entry in `error.errors[]`. `field` is the payload key; `editions[n].deliv_id` for a row. */
 export interface ApiFieldError {
@@ -161,11 +136,12 @@ function errorFrom(body: ApiErrorBody | null, fallback: Pick<ApiError, 'title' |
   return { ...error, message: bannerFor(error) }
 }
 
-export async function submitAutoAppPush(payload: AutoAppPushPayload): Promise<SubmitResult> {
-  // A run-level failure has nothing to say about any row, so `rowErrors` stays empty.
+export async function submitAutoAppPush(payload: AutoAppPushPayload, apiToken: string): Promise<SubmitResult> {
+  // A run-level failure has nothing to say about any input, so `rowErrors` and `tokenError` stay empty.
   const fail = (title: string, message: string, code?: string): SubmitResult => ({
     ok: false,
     rowErrors: [],
+    tokenError: null,
     error: { code, title, message, errors: [] },
   })
 
@@ -173,22 +149,15 @@ export async function submitAutoAppPush(payload: AutoAppPushPayload): Promise<Su
   try {
     res = await fetch(AUTO_APP_PUSH_ROUTE, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', [TOKEN_HEADER]: apiToken.trim() },
       body: JSON.stringify(payload),
     })
   } catch {
     return fail('Could not reach this tool’s own server', 'Check that the dev server is still running, then try again.')
   }
 
-  // 200 while the endpoint is validation-only, 201 once delivery is switched on. Same body.
-  if (res.status === 200 || res.status === 201) {
-    const data = (await readBody<SuccessBody>(res))?.data
-    if (data && Array.isArray(data.editions)) return { ok: true, data: data as AutoAppPushResult }
-    return fail(
-      'The API took the run but we could not read its answer',
-      `It answered ${res.status}, so the file may already be on S3. Check the ecs-api logs before you send again.`,
-    )
-  }
+  // 201 is the success, and it is empty — zero bytes, nothing to parse. Branch on the status alone.
+  if (res.ok) return { ok: true }
 
   // 422 is validation, one entry per field. 400 is a body the API could not read at all (not
   // JSON, or a key it does not know) and uses the same envelope, so both are split the same way.
@@ -198,17 +167,18 @@ export async function submitAutoAppPush(payload: AutoAppPushPayload): Promise<Su
       message: `It answered ${res.status} without saying which values.`,
     })
     const { rowErrors, general } = splitErrors(error.errors, payload.editions)
-    return { ok: false, rowErrors, error: { ...error, errors: general } }
+    return { ok: false, rowErrors, tokenError: null, error: { ...error, errors: general } }
   }
 
+  // The API did not take the token the tester typed, so the mark goes on that field.
   if (res.status === 401) {
     const error = errorFrom(await readBody<ApiErrorBody>(res), {
       title: 'Unauthorized',
-      message: 'The X-APIToken header is missing or wrong.',
+      message: 'The API token was not accepted.',
     })
-    // Where the token went wrong (SSM on staging, .env.local here) is for the console, not the tester.
-    console.error('401 from the API: X-APIToken missing or wrong. On staging check SSM at /epica/stg/api.')
-    return { ok: false, rowErrors: [], error }
+    // Where the right value lives is for the console, not the tester.
+    console.error('401 from the API: X-APIToken rejected. The staging value is in SSM at /epica/stg/api.')
+    return { ok: false, rowErrors: [], tokenError: 'The API did not accept this token.', error }
   }
 
   // 404 is the one response with no body at all, so never parse it.
@@ -224,5 +194,5 @@ export async function submitAutoAppPush(payload: AutoAppPushPayload): Promise<Su
     title: `The request failed with HTTP ${res.status}`,
     message: 'The response had no error details.',
   })
-  return { ok: false, rowErrors: [], error }
+  return { ok: false, rowErrors: [], tokenError: null, error }
 }
