@@ -1,7 +1,10 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { FieldError, Req } from '@/components/FieldText'
 import { LINKS, SERVER_LABEL, SUB_TYPE, timeLabel, type NotificationRow, type Server } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -16,6 +19,10 @@ interface Props {
   distributeNow: boolean
   server: Server
   onServerChange: (s: Server) => void
+  /** The X-APIToken for ecs-api. Typed in here for each session; never stored. */
+  apiToken: string
+  onApiTokenChange: (v: string) => void
+  apiTokenError: string | null
   hasErrors: boolean
   noRecipients: boolean
   badDate: boolean
@@ -38,6 +45,9 @@ export function ReviewRail({
   distributeNow,
   server,
   onServerChange,
+  apiToken,
+  onApiTokenChange,
+  apiTokenError,
   hasErrors,
   noRecipients,
   badDate,
@@ -84,6 +94,25 @@ export function ReviewRail({
             </label>
           ))}
         </RadioGroup>
+        {server === 'ecs-api' && (
+          <div className="mt-3 border-t pt-3.5">
+            <Label htmlFor="ptc-api-token" className="mb-1.5">
+              API token <Req />
+            </Label>
+            <Input
+              id="ptc-api-token"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Paste the test notification API token"
+              value={apiToken}
+              aria-invalid={apiTokenError ? true : undefined}
+              aria-describedby={apiTokenError ? 'ptc-api-token-error' : undefined}
+              onChange={(e) => onApiTokenChange(e.target.value)}
+            />
+            {apiTokenError && <FieldError id="ptc-api-token-error" messages={[apiTokenError]} />}
+          </div>
+        )}
       </Card>
 
       <div className="mt-3.5 flex flex-col">

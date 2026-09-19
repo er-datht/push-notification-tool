@@ -70,6 +70,10 @@ const INITIAL_ROWS: NotificationRow[] = [
 export function PushConsole() {
   const [done, setDone] = useState(false)
   const [server, setServer] = useState<Server>('ecs-api')
+  // The X-APIToken lives in state only. It is a secret, so it is never written to localStorage.
+  const [apiToken, setApiToken] = useState('')
+  // What the API said about the last token it was sent. Cleared as soon as the token changes.
+  const [apiTokenError, setApiTokenError] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
   const [sideOpen, setSideOpen] = useState(true)
@@ -127,9 +131,11 @@ export function PushConsole() {
 
   const noRecipients = checked && loginIds.length === 0
   const dateError = checked ? dateErrorFor(date) : null
-  // Only form problems block Execute. A bad token or a host we cannot reach is worth trying
+  const tokenMissing = server === 'ecs-api' && !apiToken.trim()
+  const tokenError = checked && tokenMissing ? 'Enter the API token.' : apiTokenError
+  // Only form problems block Execute. A rejected token or a host we cannot reach is worth trying
   // again, so it must not turn into a "fix the cards" note when the cards are already fine.
-  const hasErrors = noRecipients || !!dateError || rowErrors.some((e) => e.length > 0)
+  const hasErrors = noRecipients || !!dateError || (checked && tokenMissing) || rowErrors.some((e) => e.length > 0)
 
   const patchRow = <K extends keyof NotificationRow>(id: number, field: K, value: NotificationRow[K]) =>
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, [field]: value } : r)))
@@ -148,12 +154,18 @@ export function PushConsole() {
     setChecked(true)
     // A fresh Execute asks for a fresh verdict, even on the same payload.
     setApiVerdict(null)
+    setApiTokenError(null)
     dismissApiErrors()
     if (errs.some((e) => e.length > 0) || noIds || badDate) {
       if (noIds) setRecipientsOpen(true)
       setRows((rs) => rs.map((r, i) => (errs[i].length ? { ...r, collapsed: false } : r)))
       // The problems are marked on the form, which the drawer would be covering.
       setReviewDrawer(false)
+      return
+    }
+    // The token field sits in the rail itself, so that stays where it is (and opens if hidden).
+    if (tokenMissing) {
+      setRailOpen(true)
       return
     }
     setConfirmOpen(true)
@@ -164,17 +176,21 @@ export function PushConsole() {
     setSubmitting(true)
     saveSettings({ loginIds, distributeNow })
 
-    const res = await submitAutoAppPush(payload)
+    const res = await submitAutoAppPush(payload, apiToken)
     setSubmitting(false)
 
-    setReviewDrawer(false)
     if (res.ok) {
+      setReviewDrawer(false)
       setResult(res.data)
       setDone(true)
       return
     }
 
     setApiVerdict({ payloadKey, rowErrors: res.rowErrors })
+    setApiTokenError(res.tokenError)
+    // A rejected token is marked in the rail, so keep that in view; anything else is on the form.
+    if (res.tokenError) setRailOpen(true)
+    else setReviewDrawer(false)
     toastApiError(res.error)
     setRows((rs) => rs.map((r, i) => (res.rowErrors[i]?.length ? { ...r, collapsed: false } : r)))
     if (res.error.errors.some((e) => e.field?.startsWith('login_ids'))) setRecipientsOpen(true)
@@ -201,6 +217,12 @@ export function PushConsole() {
       distributeNow={distributeNow}
       server={server}
       onServerChange={setServer}
+      apiToken={apiToken}
+      onApiTokenChange={(v) => {
+        setApiToken(v)
+        setApiTokenError(null)
+      }}
+      apiTokenError={tokenError}
       hasErrors={hasErrors}
       noRecipients={noRecipients}
       badDate={!!dateError}

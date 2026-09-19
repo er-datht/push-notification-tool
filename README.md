@@ -8,7 +8,7 @@ Console UI for the Push Notification Tool (STAG only). Built from the Claude Des
 
 ```bash
 yarn install
-cp .env.example .env.local   # then fill both values in
+cp .env.example .env.local   # then fill in ECS_API_URL
 yarn dev
 ```
 
@@ -17,18 +17,19 @@ Opens at http://localhost:3000.
 ## Configuration
 
 Executing a run posts to `ecs-api` at `POST /api/test_notification/auto_app_pushes` (see
-`docs/API-DOC-auto-app-push.md`). Two server-only env vars are required:
+`docs/API-DOC-auto-app-push.md`). One server-only env var is required:
 
 | Variable | Notes |
 |---|---|
 | `ECS_API_URL` | Base URL of the ecs-api host. Staging and below — the endpoint 404s on production. |
-| `TEST_NOTIFICATION_API_TOKEN` | Shared secret sent as `X-APIToken`. Lives in SSM at `/epica/stg/api`. |
 
-Neither may be prefixed `NEXT_PUBLIC_`: that would inline the token into the client bundle. Both
-are read only inside the route handler, so the browser never sees the token and never has to get
-past the API's CORS allowlist.
+It must not be prefixed `NEXT_PUBLIC_`. It is read only inside the route handler, so the browser
+never has to get past the API's CORS allowlist. Without it, the Execute button returns a 500 telling
+you what is missing — the UI itself still runs.
 
-Without them, the Execute button returns a 500 telling you what is missing — the UI itself still runs.
+The `X-APIToken` is not configured anywhere: the tester pastes it into the **API token** field under
+*Dispatch target → ecs-api* before each session. The staging value lives in SSM at `/epica/stg/api`.
+The page sends it with each run and never stores it.
 
 ## Screenshots
 

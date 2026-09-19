@@ -1,8 +1,11 @@
 import { bannerFor, linkLabelFor, messageFor } from '@/lib/apiMessages'
 import { LINKS, type NotificationRow, type RowError, type RowField } from '@/lib/types'
 
-/** Our own route handler. It keeps the X-APIToken, so the browser never sees it. */
+/** Our own route handler. It adds nothing of its own: the token goes with each request. */
 const AUTO_APP_PUSH_ROUTE = '/api/push/auto-app-push'
+
+/** The header the route handler forwards to the API unchanged. */
+const TOKEN_HEADER = 'X-APIToken'
 
 export interface EditionPayload {
   publish_hour_min: [number, number]
@@ -52,10 +55,11 @@ interface SuccessBody {
 export type SubmitResult =
   | { ok: true; data: AutoAppPushResult }
   /**
-   * `rowErrors[i]` belongs to edition `i`. `error.errors` keeps only the entries that were not
-   * about a row, so the toast never repeats what a card already shows.
+   * `rowErrors[i]` belongs to edition `i` and `tokenError` to the API token field, the same way a
+   * row error belongs to its card. `error.errors` keeps only the entries that were about neither,
+   * so the toast never repeats what an input already shows.
    */
-  | { ok: false; rowErrors: RowError[][]; error: ApiError }
+  | { ok: false; rowErrors: RowError[][]; tokenError: string | null; error: ApiError }
 
 /** One entry in `error.errors[]`. `field` is the payload key; `editions[n].deliv_id` for a row. */
 export interface ApiFieldError {
@@ -161,11 +165,12 @@ function errorFrom(body: ApiErrorBody | null, fallback: Pick<ApiError, 'title' |
   return { ...error, message: bannerFor(error) }
 }
 
-export async function submitAutoAppPush(payload: AutoAppPushPayload): Promise<SubmitResult> {
-  // A run-level failure has nothing to say about any row, so `rowErrors` stays empty.
+export async function submitAutoAppPush(payload: AutoAppPushPayload, apiToken: string): Promise<SubmitResult> {
+  // A run-level failure has nothing to say about any input, so `rowErrors` and `tokenError` stay empty.
   const fail = (title: string, message: string, code?: string): SubmitResult => ({
     ok: false,
     rowErrors: [],
+    tokenError: null,
     error: { code, title, message, errors: [] },
   })
 
@@ -173,7 +178,7 @@ export async function submitAutoAppPush(payload: AutoAppPushPayload): Promise<Su
   try {
     res = await fetch(AUTO_APP_PUSH_ROUTE, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', [TOKEN_HEADER]: apiToken.trim() },
       body: JSON.stringify(payload),
     })
   } catch {
@@ -198,17 +203,18 @@ export async function submitAutoAppPush(payload: AutoAppPushPayload): Promise<Su
       message: `It answered ${res.status} without saying which values.`,
     })
     const { rowErrors, general } = splitErrors(error.errors, payload.editions)
-    return { ok: false, rowErrors, error: { ...error, errors: general } }
+    return { ok: false, rowErrors, tokenError: null, error: { ...error, errors: general } }
   }
 
+  // The API did not take the token the tester typed, so the mark goes on that field.
   if (res.status === 401) {
     const error = errorFrom(await readBody<ApiErrorBody>(res), {
       title: 'Unauthorized',
-      message: 'The X-APIToken header is missing or wrong.',
+      message: 'The API token was not accepted.',
     })
-    // Where the token went wrong (SSM on staging, .env.local here) is for the console, not the tester.
-    console.error('401 from the API: X-APIToken missing or wrong. On staging check SSM at /epica/stg/api.')
-    return { ok: false, rowErrors: [], error }
+    // Where the right value lives is for the console, not the tester.
+    console.error('401 from the API: X-APIToken rejected. The staging value is in SSM at /epica/stg/api.')
+    return { ok: false, rowErrors: [], tokenError: 'The API did not accept this token.', error }
   }
 
   // 404 is the one response with no body at all, so never parse it.
@@ -224,5 +230,5 @@ export async function submitAutoAppPush(payload: AutoAppPushPayload): Promise<Su
     title: `The request failed with HTTP ${res.status}`,
     message: 'The response had no error details.',
   })
-  return { ok: false, rowErrors: [], error }
+  return { ok: false, rowErrors: [], tokenError: null, error }
 }
