@@ -1,23 +1,23 @@
+'use client'
+
 import { MenuIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useShell } from '@/lib/shell'
 
-interface Props {
-  showSideToggle: boolean
-  sideOpen: boolean
-  onToggleSide: () => void
-}
-
-export function Header({ showSideToggle, sideOpen, onToggleSide }: Props) {
-  const label = sideOpen ? 'Hide push type list' : 'Show push type list'
+/** Rendered once by the root layout. The menu button drives the push-type list through `useShell`. */
+export function Header() {
+  const { narrow, sideOpen, sideDrawer, toggleSide, sideToggle } = useShell()
+  const open = narrow ? sideDrawer : sideOpen
+  const label = open ? 'Hide push type list' : 'Show push type list'
   return (
     <header className="flex min-h-15 shrink-0 flex-wrap items-center gap-4 bg-sidebar px-4.5 text-[#eef1f6] sm:px-7">
-      {showSideToggle && (
+      {sideToggle && (
         <Button
           variant="ghost"
           size="icon"
           className="-ml-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-white"
-          onClick={onToggleSide}
+          onClick={toggleSide}
           aria-label={label}
           title={label}
         >

@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
 import { RunSettings } from '@/components/RunSettings'
 import { RecipientsSection } from '@/components/RecipientsSection'
@@ -11,7 +10,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { DoneView } from '@/components/DoneView'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer'
-import { NARROW_QUERY, useMediaQuery } from '@/lib/useMediaQuery'
+import { useShell } from '@/lib/shell'
 import { cn } from '@/lib/utils'
 import { buildPayload, submitAutoAppPush, type AutoAppPushPayload } from '@/lib/api'
 import { dismissApiErrors, toastApiError } from '@/lib/toast'
@@ -77,11 +76,10 @@ export function PushConsole() {
   const [apiTokenError, setApiTokenError] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
-  const [sideOpen, setSideOpen] = useState(true)
-  // Narrow screens swap the sidebar and the rail for drawers. Those have their own open flags so a
-  // rail hidden on desktop does not turn into a drawer that is already open after a resize.
-  const narrow = useMediaQuery(NARROW_QUERY)
-  const [sideDrawer, setSideDrawer] = useState(false)
+  // The push-type list is toggled from the header, which the layout renders above this page, so
+  // its open flags live in ShellProvider. The review rail's own flags stay here: a rail hidden on
+  // desktop must not turn into a drawer that is already open after a resize.
+  const { narrow, sideOpen, sideDrawer, closeSideDrawer, setSideToggle } = useShell()
   const [reviewDrawer, setReviewDrawer] = useState(false)
   const [recipientsOpen, setRecipientsOpen] = useState(false)
   const [checked, setChecked] = useState(false)
@@ -208,6 +206,8 @@ export function PushConsole() {
       setReviewDrawer(false)
       setSent(payload)
       setDone(true)
+      // The done screen has no push-type list, so the header's menu button goes with it.
+      setSideToggle(false)
       return
     }
 
@@ -226,6 +226,7 @@ export function PushConsole() {
 
   const startOver = () => {
     setDone(false)
+    setSideToggle(true)
     setChecked(false)
     setConfirmOpen(false)
     setSent(null)
@@ -258,13 +259,9 @@ export function PushConsole() {
   )
 
   return (
-    <div className={cn('flex flex-col bg-background', narrow ? 'min-h-screen' : 'h-screen overflow-hidden')}>
-      <Header
-        showSideToggle={!done}
-        sideOpen={narrow ? sideDrawer : sideOpen}
-        onToggleSide={() => (narrow ? setSideDrawer((v) => !v) : setSideOpen((v) => !v))}
-      />
-
+    // Fills what the header leaves. Wide screens scroll per column; narrow ones scroll the whole
+    // page here, which keeps the bottom action bar sticky to this box.
+    <div className={cn('flex min-h-0 flex-1 flex-col', narrow ? 'overflow-y-auto' : 'overflow-hidden')}>
       {done && sent ? (
         <DoneView rows={rows} payload={sent} server={server} onStartOver={startOver} />
       ) : (
@@ -360,7 +357,7 @@ export function PushConsole() {
 
       {narrow && !done && (
         <>
-          <Drawer direction="left" open={sideDrawer} onOpenChange={(o) => !o && setSideDrawer(false)}>
+          <Drawer direction="left" open={sideDrawer} onOpenChange={(o) => !o && closeSideDrawer()}>
             <DrawerContent
               showCloseButton
               className="bg-sidebar text-sidebar-foreground [&_[data-slot=drawer-close]]:text-sidebar-foreground [&_[data-slot=drawer-close]]:hover:bg-sidebar-accent [&_[data-slot=drawer-close]]:hover:text-white"
