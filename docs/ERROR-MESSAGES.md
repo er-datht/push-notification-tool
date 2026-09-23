@@ -16,6 +16,7 @@ payload the form sent. Where each error lands on the page is in `docs/UI-FIELD-M
 | `AP-0101` | `date`                         | Delivery date           | `date` not parseable                    | date is invalid (AP-0101)                                                  | Enter a valid date.                                                        |
 | `AP-0102` | `login_ids`                    | Login IDs (Recipients)  | `login_ids` missing or empty            | login_ids must not be empty (AP-0102)                                      | Add at least one login ID. *(toast; the Recipients panel opens)*           |
 | `AP-0103` | `editions`                     | Notifications           | `editions` missing or empty             | editions must not be empty (AP-0103)                                       | Add at least one notification.                                             |
+| `AP-0104` | `distribute_now`               | — (toast)                | `distribute_now` present but not boolean | distribute_now must be true or false (AP-0104)                            | distribute_now must be true or false. *(express only — not in the ecs-api contract)* |
 | `AP-0201` | `editions[n].deliv_id`         | Delivery ID             | Blank `deliv_id`                        | deliv_id is required (AP-0201)                                             | Enter a delivery ID.                                                       |
 | `AP-0202` | `editions[n].deliv_id`         | Delivery ID             | Longer than 24 characters               | deliv_id must be 24 characters or less (AP-0202)                           | Delivery ID must be 24 characters or fewer.                                |
 | `AP-0203` | `editions[n].title`            | Notification text       | Blank `title`                           | title is required (AP-0203)                                                | Enter the notification text.                                               |
@@ -35,3 +36,11 @@ Our own route handler answers in the same envelope but without an `error_id`, so
 | `NO_TOKEN`        | 401  | API token (review rail)  | Request sent with no `X-APIToken` (by hand) | API token missing — Enter the API token and try again.                             |
 | `INVALID_JSON`    | 400  | — (toast)                | Our request body was not JSON              | Bad request — The request body is not valid JSON.                                   |
 | `API_UNREACHABLE` | 502  | — (toast)                | ecs-api did not answer                     | Could not reach the API — `<url>` did not answer. Check ECS_API_URL and whether staging is up. |
+
+`express` has no route handler — the browser calls it directly — so `src/lib/api.ts` synthesizes
+its own "can't even ask" messages instead of reading a `code` off a response:
+
+| When                                             | FE message                                                                          |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_EXPRESS_API_URL` not set              | The tool is not set up yet — Set NEXT_PUBLIC_EXPRESS_API_URL in .env.local and restart the dev server. |
+| `fetch` to express threw                           | Could not reach the express API — Check NEXT_PUBLIC_EXPRESS_API_URL and whether the express service is running. |

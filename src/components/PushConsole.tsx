@@ -150,7 +150,7 @@ export function PushConsole() {
 
   const noRecipients = checked && loginIds.length === 0
   const dateError = checked ? dateErrorFor(date) : null
-  const tokenMissing = server === 'ecs-api' && !apiToken.trim()
+  const tokenMissing = !apiToken.trim()
   const tokenError = checked && tokenMissing ? 'Enter the API token.' : apiTokenError
   // Only form problems block Execute. A rejected token or a host we cannot reach is worth trying
   // again, so it must not turn into a "fix the cards" note when the cards are already fine.
@@ -199,7 +199,7 @@ export function PushConsole() {
     setSubmitting(true)
     saveSettings({ loginIds, distributeNow })
 
-    const res = await submitAutoAppPush(payload, apiToken)
+    const res = await submitAutoAppPush(payload, apiToken, server)
     setSubmitting(false)
 
     if (res.ok) {

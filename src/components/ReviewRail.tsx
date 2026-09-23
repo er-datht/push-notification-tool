@@ -19,7 +19,7 @@ interface Props {
   distributeNow: boolean
   server: Server
   onServerChange: (s: Server) => void
-  /** The X-APIToken for ecs-api. Typed in here for each session; never stored. */
+  /** The X-APIToken for whichever server is selected. Typed in here for each session; never stored. */
   apiToken: string
   onApiTokenChange: (v: string) => void
   apiTokenError: string | null
@@ -30,7 +30,7 @@ interface Props {
 
 const SERVERS: { value: Server; sub: string; disabled?: boolean }[] = [
   { value: 'ecs-api', sub: 'The old Rails batch path' },
-  { value: 'express', sub: 'New service, not ready yet', disabled: true },
+  { value: 'express', sub: 'The new Node/Express service' },
 ]
 
 export function ReviewRail({
@@ -80,25 +80,23 @@ export function ReviewRail({
             </label>
           ))}
         </RadioGroup>
-        {server === 'ecs-api' && (
-          <div className="mt-3 border-t pt-3.5">
-            <Label htmlFor="ptc-api-token" className="mb-1.5">
-              API token <Req />
-            </Label>
-            <Input
-              id="ptc-api-token"
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="Paste the test notification API token"
-              value={apiToken}
-              aria-invalid={apiTokenError ? true : undefined}
-              aria-describedby={apiTokenError ? 'ptc-api-token-error' : undefined}
-              onChange={(e) => onApiTokenChange(e.target.value)}
-            />
-            {apiTokenError && <FieldError id="ptc-api-token-error" messages={[apiTokenError]} />}
-          </div>
-        )}
+        <div className="mt-3 border-t pt-3.5">
+          <Label htmlFor="ptc-api-token" className="mb-1.5">
+            API token <Req />
+          </Label>
+          <Input
+            id="ptc-api-token"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Paste the test notification API token"
+            value={apiToken}
+            aria-invalid={apiTokenError ? true : undefined}
+            aria-describedby={apiTokenError ? 'ptc-api-token-error' : undefined}
+            onChange={(e) => onApiTokenChange(e.target.value)}
+          />
+          {apiTokenError && <FieldError id="ptc-api-token-error" messages={[apiTokenError]} />}
+        </div>
       </Card>
 
       <div className="mt-3.5 flex flex-col">
