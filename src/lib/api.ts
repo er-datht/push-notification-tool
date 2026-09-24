@@ -175,9 +175,7 @@ export async function submitAutoAppPush(payload: AutoAppPushPayload, apiToken: s
       body: JSON.stringify(payload),
     })
   } catch {
-    return server === 'ecs-api'
-      ? fail('Could not reach this tool’s own server', 'Check that the dev server is still running, then try again.')
-      : fail('Could not reach the express API', 'Check NEXT_PUBLIC_EXPRESS_API_URL and whether the express service is running.')
+    return fail('Could not reach this tool’s own server', 'Check that the dev server is still running, then try again.')
   }
 
   // 201 is the success, and it is empty — zero bytes, nothing to parse. Branch on the status alone.

@@ -43,4 +43,4 @@ its own "can't even ask" messages instead of reading a `code` off a response:
 | When                                             | FE message                                                                          |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `NEXT_PUBLIC_EXPRESS_API_URL` not set              | The tool is not set up yet — Set NEXT_PUBLIC_EXPRESS_API_URL in .env.local and restart the dev server. |
-| `fetch` to express threw                           | Could not reach the express API — Check NEXT_PUBLIC_EXPRESS_API_URL and whether the express service is running. |
+| `fetch` to express threw                           | Could not reach this tool's own server — Check that the dev server is still running, then try again. *(same message as ecs-api's `API_UNREACHABLE`)* |
