@@ -20,6 +20,7 @@ const WORDING_BY_ERROR_ID: Record<string, Wording> = {
   'AP-0101': 'Enter a valid date.',
   'AP-0102': 'Add at least one login ID.',
   'AP-0103': 'Add at least one notification.',
+  'AP-0104': 'distribute_now must be true or false.',
   // One edition. `label` is the link field's label for the row's kind.
   'AP-0201': 'Enter a delivery ID.',
   'AP-0202': `Delivery ID must be ${DELIV_ID_MAX} characters or fewer.`,

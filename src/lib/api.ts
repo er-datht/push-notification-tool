@@ -1,11 +1,22 @@
 import { bannerFor, linkLabelFor, messageFor } from '@/lib/apiMessages'
-import { LINKS, type NotificationRow, type RowError, type RowField } from '@/lib/types'
+import { LINKS, type NotificationRow, type RowError, type RowField, type Server } from '@/lib/types'
 
-/** Our own route handler. It adds nothing of its own: the token goes with each request. */
+/** Our own route handler for ecs-api. It adds nothing of its own: the token goes with each request. */
 const AUTO_APP_PUSH_ROUTE = '/api/push/auto-app-push'
 
-/** The header the route handler forwards to the API unchanged. */
+/**
+ * express's CORS allows this app's origin directly (unlike ecs-api), and its base URL is not a
+ * secret the way ECS_API_URL is, so this goes straight from the browser with no proxy hop.
+ */
+const EXPRESS_ENDPOINT = '/api/notifications/auto-app-pushes'
+
+/** The header both APIs expect the token in. */
 const TOKEN_HEADER = 'X-APIToken'
+
+function expressBase(): string | null {
+  const base = process.env.NEXT_PUBLIC_EXPRESS_API_URL
+  return base ? base.replace(/\/+$/, '') : null
+}
 
 export interface EditionPayload {
   publish_hour_min: [number, number]
@@ -136,7 +147,7 @@ function errorFrom(body: ApiErrorBody | null, fallback: Pick<ApiError, 'title' |
   return { ...error, message: bannerFor(error) }
 }
 
-export async function submitAutoAppPush(payload: AutoAppPushPayload, apiToken: string): Promise<SubmitResult> {
+export async function submitAutoAppPush(payload: AutoAppPushPayload, apiToken: string, server: Server): Promise<SubmitResult> {
   // A run-level failure has nothing to say about any input, so `rowErrors` and `tokenError` stay empty.
   const fail = (title: string, message: string, code?: string): SubmitResult => ({
     ok: false,
@@ -145,15 +156,28 @@ export async function submitAutoAppPush(payload: AutoAppPushPayload, apiToken: s
     error: { code, title, message, errors: [] },
   })
 
+  let url: string
+  if (server === 'ecs-api') {
+    url = AUTO_APP_PUSH_ROUTE
+  } else {
+    const base = expressBase()
+    if (!base) {
+      return fail('The tool is not set up yet', 'Set NEXT_PUBLIC_EXPRESS_API_URL in .env.local and restart the dev server.', 'NOT_CONFIGURED')
+    }
+    url = `${base}${EXPRESS_ENDPOINT}`
+  }
+
   let res: Response
   try {
-    res = await fetch(AUTO_APP_PUSH_ROUTE, {
+    res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', [TOKEN_HEADER]: apiToken.trim() },
       body: JSON.stringify(payload),
     })
   } catch {
-    return fail('Could not reach this tool’s own server', 'Check that the dev server is still running, then try again.')
+    return server === 'ecs-api'
+      ? fail('Could not reach this tool’s own server', 'Check that the dev server is still running, then try again.')
+      : fail('Could not reach the express API', 'Check NEXT_PUBLIC_EXPRESS_API_URL and whether the express service is running.')
   }
 
   // 201 is the success, and it is empty — zero bytes, nothing to parse. Branch on the status alone.
@@ -181,8 +205,10 @@ export async function submitAutoAppPush(payload: AutoAppPushPayload, apiToken: s
     return { ok: false, rowErrors: [], tokenError: 'The API did not accept this token.', error }
   }
 
-  // 404 is the one response with no body at all, so never parse it.
-  if (res.status === 404) {
+  // ecs-api's 404 means "disabled in prod on purpose" and is always empty — never parse it.
+  // express has no such concept: its 404 is an ordinary envelope with a body, so it falls through
+  // to the generic handling below like any other status.
+  if (res.status === 404 && server === 'ecs-api') {
     return fail(
       '404 Not Found',
       'The endpoint is turned off on production on purpose. On staging it means the deploy is not out yet.',

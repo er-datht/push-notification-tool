@@ -24,7 +24,7 @@ table does not list. Code: `src/lib/apiMessages.ts` (wording) and `splitErrors` 
 | Destination URL         | Card, kind = Web   | `editions[n].link_item`        | `editions[n].link_item`        | `linkValue`               |
 | Kogyo / bundle code     | Card, kind = Kogyo | `editions[n].link_item`        | `editions[n].link_item`        | `linkValue`               |
 | Word ID                 | Card, kind = Word  | `editions[n].link_item`        | `editions[n].link_item`        | `linkValue`               |
-| API token               | Review rail, under ecs-api | `X-APIToken` header    | — (HTTP 401)                   | the token field           |
+| API token               | Review rail        | `X-APIToken` header            | — (HTTP 401)                   | the token field           |
 
 The link field's label comes from `LINKS[kind].label` in `src/lib/types.ts`. `link_type` is
 `03` for Web, `01` for Kogyo, `02` for Word.
@@ -67,6 +67,7 @@ date box. A rejected token (`401`) keeps the review rail open instead, with the 
 | `AP-0101`  | date is invalid                                                         | Enter a valid date.                                                        |
 | `AP-0102`  | login_ids must not be empty                                             | Add at least one login ID. *(the Recipients panel opens and the page scrolls to it)* |
 | `AP-0103`  | editions must not be empty                                              | Add at least one notification.                                             |
+| `AP-0104`  | distribute_now must be true or false                                    | distribute_now must be true or false. *(express only — not in the ecs-api contract; only reachable by hand)* |
 
 ### One notification (under the input on its card; the page scrolls to the first such card)
 
@@ -99,6 +100,14 @@ without an `error_id`, so its `title` / `message` are shown as written:
 | `NO_TOKEN`        | 401  | No `X-APIToken` on the request (only by hand; the page blocks an empty token) | API token missing — Enter the API token and try again. *(the token field turns red)* |
 | `INVALID_JSON`    | 400  | Our own request body was not JSON      | Bad request — The request body is not valid JSON.              |
 | `API_UNREACHABLE` | 502  | ecs-api did not answer                 | Could not reach the API — `<url>` did not answer. Check ECS_API_URL and whether staging is up. |
+
+`express` has no route handler of its own — the browser calls it directly — so `src/lib/api.ts`
+synthesizes the same two "can't even ask" cases itself instead of reading them off a response:
+
+| When                                              | Shown on UI                                                                        |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_EXPRESS_API_URL` not set              | The tool is not set up yet — Set NEXT_PUBLIC_EXPRESS_API_URL in .env.local and restart the dev server. |
+| `fetch` to express threw (host down, CORS, etc.)   | Could not reach the express API — Check NEXT_PUBLIC_EXPRESS_API_URL and whether the express service is running. |
 
 ## Adding a field or an error
 
