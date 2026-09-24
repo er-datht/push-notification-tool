@@ -64,6 +64,7 @@ date box. A rejected token (`401`) keeps the review rail open instead, with the 
 | `AP-0002`  | The X-APIToken header is missing or wrong.                              | The API token was not accepted. Check it and try again. *(the API token field turns red)* |
 | `AP-0003`  | body is not valid JSON                                                  | Something went wrong. Reload the page and try again.                       |
 | `AP-0004`  | unknown parameter `<key>`                                               | Something went wrong. Reload the page and try again.                       |
+| `AP-0006`  | The delivery file could not be uploaded to S3.                          | Could not upload the delivery file. Try again in a moment. *(express only)* |
 | `AP-0101`  | date is invalid                                                         | Enter a valid date.                                                        |
 | `AP-0102`  | login_ids must not be empty                                             | Add at least one login ID. *(the Recipients panel opens and the page scrolls to it)* |
 | `AP-0103`  | editions must not be empty                                              | Add at least one notification.                                             |
