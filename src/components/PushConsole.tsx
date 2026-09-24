@@ -1,16 +1,41 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
-import { Header } from '@/components/Header'
+import { useEffect, useMemo, useState } from 'react'
 import { Sidebar } from '@/components/Sidebar'
+import { RunSettings } from '@/components/RunSettings'
 import { RecipientsSection } from '@/components/RecipientsSection'
 import { NotificationRowCard } from '@/components/NotificationRowCard'
 import { ReviewRail } from '@/components/ReviewRail'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { DoneView } from '@/components/DoneView'
-import { errorsFor, SERVER_LABEL, type NotificationRow, type Server } from '@/lib/types'
+import { Button } from '@/components/ui/button'
+import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer'
+import { useShell } from '@/lib/shell'
+import { cn } from '@/lib/utils'
+import { buildPayload, submitAutoAppPush, type AutoAppPushPayload } from '@/lib/api'
+import { dismissApiErrors, toastApiError } from '@/lib/toast'
+import { loadSettings, saveSettings } from '@/lib/storage'
+import {
+  dateErrorFor,
+  nextDelivId,
+  rowDomId,
+  SERVER_LABEL,
+  todayInTokyo,
+  validateRows,
+  type NotificationRow,
+  type RowError,
+  type Server,
+} from '@/lib/types'
 
 const DEFAULT_LOGIN_IDS = ['e-plus-test01', 'e-plus-test02', 'e-plus-test03']
+
+/** What the API said about one exact payload. Shown only while the form still matches it. */
+interface ApiVerdict {
+  payloadKey: string
+  rowErrors: RowError[][]
+}
+
+const NO_API_ERRORS: RowError[][] = []
 
 const newRow = (id: number, overrides: Partial<NotificationRow> = {}): NotificationRow => ({
   id,
@@ -25,29 +50,114 @@ const newRow = (id: number, overrides: Partial<NotificationRow> = {}): Notificat
 })
 
 const INITIAL_ROWS: NotificationRow[] = [
-  newRow(1, { min: '30', delivId: 'H020064377', title: 'イープラスのWEBページへ遷移します。', kind: 'web', linkValue: 'https://eplus.jp/' }),
-  newRow(2, { min: '35', delivId: 'H020064378', title: 'スマチケ公演バンドルをご紹介', kind: 'kogyo', linkValue: '9041480001-P0030001P021001', collapsed: true }),
+  newRow(1, {
+    min: '30',
+    delivId: 'H020064377',
+    title: 'イープラスのWEBページへ遷移します。',
+    kind: 'web',
+    linkValue: 'https://eplus.jp/',
+  }),
+  newRow(2, {
+    min: '35',
+    delivId: 'H020064378',
+    title: 'スマチケ公演バンドルをご紹介',
+    kind: 'kogyo',
+    linkValue: '9041480001-P0030001P021001',
+    collapsed: true,
+  }),
 ]
 
 export function PushConsole() {
   const [done, setDone] = useState(false)
   const [server, setServer] = useState<Server>('ecs-api')
+  // The X-APIToken lives in state only. It is a secret, so it is never written to localStorage.
+  const [apiToken, setApiToken] = useState('')
+  // What the API said about the last token it was sent. Cleared as soon as the token changes.
+  const [apiTokenError, setApiTokenError] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
-  const [sideOpen, setSideOpen] = useState(true)
+  // The push-type list is toggled from the header, which the layout renders above this page, so
+  // its open flags live in ShellProvider. The review rail's own flags stay here: a rail hidden on
+  // desktop must not turn into a drawer that is already open after a resize.
+  const { narrow, sideOpen, sideDrawer, closeSideDrawer, setSideToggle } = useShell()
+  const [reviewDrawer, setReviewDrawer] = useState(false)
   const [recipientsOpen, setRecipientsOpen] = useState(false)
   const [checked, setChecked] = useState(false)
   const [loginIds, setLoginIds] = useState<string[]>(DEFAULT_LOGIN_IDS)
   const [rows, setRows] = useState<NotificationRow[]>(INITIAL_ROWS)
   const [nextId, setNextId] = useState(3)
+  // These start empty and are filled in by the mount effect below, never here.
+  const [date, setDate] = useState('')
+  const [minDate, setMinDate] = useState('')
+  const [distributeNow, setDistributeNow] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  // The payload the API said 201 to. Its 201 is empty, so this is the whole record of the run.
+  const [sent, setSent] = useState<AutoAppPushPayload | null>(null)
+  const [apiVerdict, setApiVerdict] = useState<ApiVerdict | null>(null)
+  // The DOM id of the first thing that needs fixing. A card below the fold gets marked red
+  // without anyone seeing it, so after a blocked Execute the page moves there.
+  const [scrollTo, setScrollTo] = useState<string | null>(null)
 
-  const rowErrors = useMemo(() => rows.map((r) => (checked ? errorsFor(r) : [])), [rows, checked])
-  const noRecipients = checked && loginIds.length === 0
-  const hasErrors = noRecipients || rowErrors.some((e) => e.length > 0)
+  /** Today in Tokyo, for the date box and its `min`. Only ever called after mount. */
+  const resetDate = () => {
+    const today = todayInTokyo()
+    setDate(today)
+    setMinDate(today)
+  }
 
-  const patchRow = useCallback(<K extends keyof NotificationRow>(id: number, field: K, value: NotificationRow[K]) => {
-    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, [field]: value } : r)))
+  // The page is prerendered, so the HTML knows nothing about the clock or about localStorage.
+  // We read both after mount. Putting them in useState would ship the build-time date and then
+  // hydrate against a different one.
+  /* oxlint-disable react/set-state-in-effect */
+  useEffect(() => {
+    resetDate()
+    const saved = loadSettings()
+    if (!saved) return
+    setLoginIds(saved.loginIds)
+    setDistributeNow(saved.distributeNow)
   }, [])
+
+  // Runs after the render that opened the collapsed cards, so the target has its final place.
+  // scrollIntoView walks nested scroll containers, so <main> on wide screens works as well as
+  // the document on narrow ones.
+  useEffect(() => {
+    if (!scrollTo) return
+    const el = document.getElementById(scrollTo)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // The first red input, so a keyboard user can start typing. The target may be that input
+    // itself (the date box) or a card holding several.
+    const INVALID = '[aria-invalid="true"]'
+    const input = el.matches(INVALID) ? el : el.querySelector<HTMLElement>(INVALID)
+    input?.focus({ preventScroll: true })
+    setScrollTo(null)
+  }, [scrollTo])
+  /* oxlint-enable react/set-state-in-effect */
+
+  const payload = buildPayload(rows, loginIds, date, distributeNow)
+  const payloadKey = JSON.stringify(payload)
+  // The server's verdict is about one payload. Once any part of it changes, the verdict is stale,
+  // so it drops out here on its own instead of being cleared from every input handler.
+  const apiRowErrors = apiVerdict?.payloadKey === payloadKey ? apiVerdict.rowErrors : NO_API_ERRORS
+  useEffect(() => {
+    dismissApiErrors()
+  }, [payloadKey])
+
+  const rowErrors = useMemo(() => {
+    const local = checked ? validateRows(rows, date) : rows.map((): RowError[] => [])
+    return local.map((e, i) => [...e, ...(apiRowErrors[i] ?? [])])
+  }, [rows, checked, date, apiRowErrors])
+
+  const noRecipients = checked && loginIds.length === 0
+  const dateError = checked ? dateErrorFor(date) : null
+  const tokenMissing = !apiToken.trim()
+  const tokenError = checked && tokenMissing ? 'Enter the API token.' : apiTokenError
+  // Only form problems block Execute. A rejected token or a host we cannot reach is worth trying
+  // again, so it must not turn into a "fix the cards" note when the cards are already fine.
+  const hasErrors = noRecipients || !!dateError || (checked && tokenMissing) || rowErrors.some((e) => e.length > 0)
+
+  const patchRow = <K extends keyof NotificationRow>(id: number, field: K, value: NotificationRow[K]) =>
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, [field]: value } : r)))
 
   const removeRow = (id: number) => setRows((rs) => (rs.length > 1 ? rs.filter((r) => r.id !== id) : rs))
 
@@ -57,48 +167,134 @@ export function PushConsole() {
   }
 
   const tryExecute = () => {
-    const errs = rows.map(errorsFor)
+    const errs = validateRows(rows, date)
     const noIds = loginIds.length === 0
+    const badDate = dateErrorFor(date)
     setChecked(true)
-    if (errs.some((e) => e.length > 0) || noIds) {
+    // A fresh Execute asks for a fresh verdict, even on the same payload.
+    setApiVerdict(null)
+    setApiTokenError(null)
+    dismissApiErrors()
+    if (errs.some((e) => e.length > 0) || noIds || badDate) {
       if (noIds) setRecipientsOpen(true)
       setRows((rs) => rs.map((r, i) => (errs[i].length ? { ...r, collapsed: false } : r)))
+      // The problems are marked on the form, which the drawer would be covering.
+      setReviewDrawer(false)
+      // A bad card goes to the top of the view. The date box and the Recipients card are near
+      // the top already, so they come after.
+      const firstBadRow = rows.find((_, i) => errs[i].length > 0)
+      setScrollTo(firstBadRow ? rowDomId(firstBadRow.id) : noIds ? 'ptc-recipients' : badDate ? 'ptc-date' : null)
+      return
+    }
+    // The token field sits in the rail itself, so that stays where it is (and opens if hidden).
+    if (tokenMissing) {
+      setRailOpen(true)
       return
     }
     setConfirmOpen(true)
   }
 
-  const execute = () => {
+  const execute = async () => {
     setConfirmOpen(false)
-    setDone(true)
+    setSubmitting(true)
+    saveSettings({ loginIds, distributeNow })
+
+    const res = await submitAutoAppPush(payload, apiToken, server)
+    setSubmitting(false)
+
+    if (res.ok) {
+      setReviewDrawer(false)
+      setSent(payload)
+      setDone(true)
+      // The done screen has no push-type list, so the header's menu button goes with it.
+      setSideToggle(false)
+      return
+    }
+
+    setApiVerdict({ payloadKey, rowErrors: res.rowErrors })
+    setApiTokenError(res.tokenError)
+    // A rejected token is marked in the rail, so keep that in view; anything else is on the form.
+    if (res.tokenError) setRailOpen(true)
+    else setReviewDrawer(false)
+    toastApiError(res.error)
+    setRows((rs) => rs.map((r, i) => (res.rowErrors[i]?.length ? { ...r, collapsed: false } : r)))
+    const aboutLoginIds = res.error.errors.some((e) => e.field?.startsWith('login_ids'))
+    if (aboutLoginIds) setRecipientsOpen(true)
+    const firstBadRow = rows.find((_, i) => res.rowErrors[i]?.length)
+    setScrollTo(firstBadRow ? rowDomId(firstBadRow.id) : aboutLoginIds ? 'ptc-recipients' : null)
   }
 
   const startOver = () => {
     setDone(false)
+    setSideToggle(true)
     setChecked(false)
     setConfirmOpen(false)
+    setSent(null)
+    resetDate()
+    // The same deliv_id twice counts as one delivery, so give every row a new one.
+    setRows((rs) => rs.map((r) => ({ ...r, delivId: nextDelivId(r.delivId) })))
   }
 
-  const closeConfirm = useCallback(() => setConfirmOpen(false), [])
+  const review = (
+    <ReviewRail
+      open={railOpen}
+      onToggle={() => setRailOpen((v) => !v)}
+      onClose={narrow ? () => setReviewDrawer(false) : undefined}
+      rows={rows}
+      recipientCount={loginIds.length}
+      date={date}
+      distributeNow={distributeNow}
+      server={server}
+      onServerChange={setServer}
+      apiToken={apiToken}
+      onApiTokenChange={(v) => {
+        setApiToken(v)
+        setApiTokenError(null)
+      }}
+      apiTokenError={tokenError}
+      hasErrors={hasErrors}
+      submitting={submitting}
+      onExecute={tryExecute}
+    />
+  )
 
   return (
-    <div className="ptc-app">
-      <Header showSideToggle={!done} sideOpen={sideOpen} onToggleSide={() => setSideOpen((v) => !v)} />
-
-      {done ? (
-        <DoneView rows={rows} recipientCount={loginIds.length} server={server} runId={`STAG-AAP-${4820 + rows.length}`} onStartOver={startOver} />
+    // Fills what the header leaves. Wide screens scroll per column; narrow ones scroll the whole
+    // page here, which keeps the bottom action bar sticky to this box.
+    <div className={cn('flex min-h-0 flex-1 flex-col', narrow ? 'overflow-y-auto' : 'overflow-hidden')}>
+      {done && sent ? (
+        <DoneView rows={rows} payload={sent} server={server} onStartOver={startOver} />
       ) : (
         <div
-          className={`ptc-shell${sideOpen ? '' : ' ptc-noside'}`}
+          className={cn(
+            'grid min-h-0 flex-1',
+            narrow
+              ? 'grid-cols-1'
+              : sideOpen
+                ? 'grid-cols-[232px_minmax(0,1fr)_var(--rail-track)]'
+                : // The sidebar is not rendered when closed, so its column must go too — otherwise
+                  // <main> lands in an empty first track and the rail takes the 1fr one.
+                  'grid-cols-[minmax(0,1fr)_var(--rail-track)]',
+          )}
           style={{ '--rail-track': railOpen ? '400px' : '64px' } as React.CSSProperties}
         >
-          {sideOpen && <Sidebar />}
+          {sideOpen && !narrow && <Sidebar />}
 
-          <main className="ptc-main">
-            <h2 className="ptc-page-title">Auto App Push</h2>
-            <p className="ptc-lede">
-              Build one or more notifications here. Recipients only receive a push if their <em>push_score_weekly</em> setting is ON — everything runs against staging.
+          <main className={cn('min-w-0 px-5 pt-7 pb-[72px] sm:px-10 sm:pt-9 sm:pb-24', !narrow && 'overflow-y-auto')}>
+            <h2 className="mb-2 text-[26px] font-semibold tracking-tight">Auto App Push</h2>
+            <p className="max-w-[64ch] text-[15px] leading-relaxed font-light text-ink-2">
+              Build one or more notifications here. A person only gets the push if their <em>push_score_weekly</em> setting is ON.
+              Everything here runs on staging.
             </p>
+
+            <RunSettings
+              date={date}
+              minDate={minDate}
+              dateError={dateError}
+              onDateChange={setDate}
+              distributeNow={distributeNow}
+              onDistributeNowChange={setDistributeNow}
+            />
 
             <RecipientsSection
               loginIds={loginIds}
@@ -108,11 +304,11 @@ export function PushConsole() {
               onRemove={(id) => setLoginIds((ids) => ids.filter((x) => x !== id))}
             />
 
-            <div className="ptc-rows-head">
-              <h3>Notifications</h3>
+            <div className="mt-10 mb-4 flex items-baseline justify-between">
+              <h3 className="text-[17px] font-semibold">Notifications</h3>
             </div>
 
-            <div className="ptc-rows">
+            <div className="flex flex-col gap-[18px]">
               {rows.map((row, i) => (
                 <NotificationRowCard
                   key={row.id}
@@ -126,31 +322,68 @@ export function PushConsole() {
               ))}
             </div>
 
-            <button className="ptc-btn-dashed" onClick={addRow}>+ Add notification</button>
+            <Button
+              variant="ghost"
+              className="mt-5 h-auto border border-dashed border-[#cfd5e0] px-[18px] py-3 text-sm font-medium hover:border-primary"
+              onClick={addRow}
+            >
+              + Add notification
+            </Button>
           </main>
 
-          <ReviewRail
-            open={railOpen}
-            onToggle={() => setRailOpen((v) => !v)}
-            rows={rows}
-            recipientCount={loginIds.length}
-            server={server}
-            onServerChange={setServer}
-            hasErrors={hasErrors}
-            noRecipients={noRecipients}
-            onExecute={tryExecute}
-          />
+          {narrow ? (
+            <div className="sticky bottom-0 z-[5] flex flex-wrap items-center gap-x-5 gap-y-2.5 border-t bg-card px-5 py-3 shadow-bar sm:px-8">
+              <p className="flex-[1_1_240px] text-[13px] leading-normal font-light text-ink-3">
+                <strong className="font-semibold text-foreground">
+                  {rows.length} notification{rows.length === 1 ? '' : 's'}
+                </strong>{' '}
+                · {loginIds.length} recipient
+                {loginIds.length === 1 ? '' : 's'} · {date || '—'} JST · {SERVER_LABEL[server]}
+              </p>
+              <Button
+                size="lg"
+                className="w-full sm:ml-auto sm:w-auto sm:min-w-[200px]"
+                onClick={() => setReviewDrawer(true)}
+                disabled={submitting}
+              >
+                {submitting ? 'Executing…' : 'Review & execute'}
+              </Button>
+            </div>
+          ) : (
+            review
+          )}
         </div>
       )}
 
-      {confirmOpen && (
-        <ConfirmDialog
-          title={`Execute ${rows.length} push notification(s)?`}
-          body={`This enqueues the run on ${SERVER_LABEL[server]} in STAG and delivers to ${loginIds.length} test account(s). It cannot be recalled once the batch picks it up.`}
-          onCancel={closeConfirm}
-          onConfirm={execute}
-        />
+      {narrow && !done && (
+        <>
+          <Drawer direction="left" open={sideDrawer} onOpenChange={(o) => !o && closeSideDrawer()}>
+            <DrawerContent
+              showCloseButton
+              className="bg-sidebar text-sidebar-foreground [&_[data-slot=drawer-close]]:text-sidebar-foreground [&_[data-slot=drawer-close]]:hover:bg-sidebar-accent [&_[data-slot=drawer-close]]:hover:text-white"
+            >
+              <DrawerTitle className="sr-only">Push types</DrawerTitle>
+              <Sidebar className="h-full pt-[22px]" />
+            </DrawerContent>
+          </Drawer>
+          <Drawer direction="right" open={reviewDrawer} onOpenChange={(o) => !o && setReviewDrawer(false)}>
+            <DrawerContent showCloseButton>
+              <DrawerTitle className="sr-only">Review</DrawerTitle>
+              {review}
+            </DrawerContent>
+          </Drawer>
+        </>
       )}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title={`Execute ${rows.length} push notification(s)?`}
+        body={`This writes the delivery file on ${SERVER_LABEL[server]} in STAG for ${date} JST, for ${loginIds.length} test account(s). ${
+          distributeNow ? 'distribute_now is ON, so the job runs right away.' : 'The import job picks it up within the next 10 minutes.'
+        } After that you cannot take it back.`}
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={execute}
+      />
     </div>
   )
 }
