@@ -2,6 +2,11 @@
 
 API reference for the push notification test tool. Hand-off document for the frontend team.
 
+> This is the one push type with a confirmed backend contract. The FE assumes the same payload
+> shape, envelope, and response rules apply to the other 5 push types (Normal, Last minute,
+> Score, News, Order) — that assumption is unconfirmed. See `src/lib/pushTypes.ts` in the FE
+> repo for the guessed endpoint paths per type, flagged there as placeholders.
+
 - **Repo:** `est-rouge/ecs-api`
 - **Branch:** `feature/create_api_for_auto_app_push_notification`
 - **Environment:** staging only
