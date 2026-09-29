@@ -1,34 +1,31 @@
-import { useEffect, useRef } from 'react'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 interface Props {
+  open: boolean
   title: string
   body: string
   onCancel: () => void
   onConfirm: () => void
 }
 
-export function ConfirmDialog({ title, body, onCancel, onConfirm }: Props) {
-  const confirmRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    confirmRef.current?.focus()
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onCancel])
-
+export function ConfirmDialog({ open, title, body, onCancel, onConfirm }: Props) {
   return (
-    <div className="ptc-overlay" onClick={onCancel}>
-      <div className="ptc-dialog" role="dialog" aria-modal="true" aria-labelledby="ptc-confirm-title" onClick={(e) => e.stopPropagation()}>
-        <h3 id="ptc-confirm-title">{title}</h3>
-        <p>{body}</p>
-        <div className="ptc-dialog-actions">
-          <button className="ptc-btn-outline" onClick={onCancel}>Cancel</button>
-          <button ref={confirmRef} className="ptc-btn" onClick={onConfirm}>Yes, execute</button>
-        </div>
-      </div>
-    </div>
+    <Dialog open={open} onOpenChange={(o) => !o && onCancel()}>
+      <DialogContent showCloseButton={false} onOpenAutoFocus={(e) => {
+        // Land on the primary action, like the mockup.
+        e.preventDefault()
+        ;(e.currentTarget as HTMLElement).querySelector<HTMLButtonElement>('[data-confirm]')?.focus()
+      }}>
+        <DialogHeader>
+          <DialogTitle className="text-[19px] font-semibold">{title}</DialogTitle>
+          <DialogDescription className="text-sm leading-relaxed font-light text-ink-2">{body}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="mx-0 mb-0 border-0 bg-transparent p-0 pt-1.5">
+          <Button variant="outline" onClick={onCancel}>Cancel</Button>
+          <Button data-confirm onClick={onConfirm}>Yes, execute</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -1,24 +1,31 @@
-interface Props {
-  showSideToggle: boolean
-  sideOpen: boolean
-  onToggleSide: () => void
-}
+'use client'
 
-export function Header({ showSideToggle, sideOpen, onToggleSide }: Props) {
-  const label = sideOpen ? 'Hide push type list' : 'Show push type list'
+import { MenuIcon } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { useShell } from '@/lib/shell'
+
+/** Rendered once by the root layout. The menu button drives the push-type list through `useShell`. */
+export function Header() {
+  const { narrow, sideOpen, sideDrawer, toggleSide, sideToggle } = useShell()
+  const open = narrow ? sideDrawer : sideOpen
+  const label = open ? 'Hide push type list' : 'Show push type list'
   return (
-    <header className="ptc-head">
-      {showSideToggle && (
-        <button className="ptc-icon-btn" onClick={onToggleSide} aria-label={label} title={label}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M3 6h18" />
-            <path d="M3 12h18" />
-            <path d="M3 18h18" />
-          </svg>
-        </button>
+    <header className="flex min-h-15 shrink-0 flex-wrap items-center gap-4 bg-sidebar px-4.5 text-[#eef1f6] sm:px-7">
+      {sideToggle && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="-ml-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-white"
+          onClick={toggleSide}
+          aria-label={label}
+          title={label}
+        >
+          <MenuIcon className="size-5" />
+        </Button>
       )}
-      <span className="ptc-head-title">Push Notification Tool</span>
-      <span className="ptc-head-env">STAG ONLY</span>
+      <span className="text-base font-semibold tracking-tight">Push Notification Tool</span>
+      <Badge className="bg-sidebar-accent text-[11px] font-semibold tracking-[0.08em] text-sidebar-foreground">STAG ONLY</Badge>
     </header>
   )
 }
