@@ -57,6 +57,11 @@ export interface PushTypeConfig {
   prereqs: string[];
   /** False only for Score — it targets one user per row via `target_user`, not a shared list. */
   recipients: boolean;
+  /** Set only for Normal Push: `login_ids` is still required and sent (per the backend
+   *  contract), but the real audience is every account subscribed to the row's `word_id`, decided
+   *  server-side — editing the shared list here is cosmetic, so the form shows this note instead
+   *  of letting the tester add/remove IDs. */
+  recipientsNote?: string;
   /** True only for Order — one shared Hour/Minute for the whole run, no per-row time fields. */
   globalTime: boolean;
   /** The JST window a delivery time must fall inside, in minutes from midnight. */
@@ -200,6 +205,8 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
       "User subscribes to the word",
     ],
     recipients: true,
+    recipientsNote:
+      "No recipient list for this type. The server sends to every account subscribed to the row's word ID — make sure your test accounts subscribe to it.",
     globalTime: false,
     windowStartMin: 8 * 60,
     windowEndMin: 21 * 60 + 59,

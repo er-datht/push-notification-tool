@@ -442,30 +442,45 @@ export function PushConsole() {
               onDistributeNowChange={setDistributeNow}
             />
 
-            {pushType.recipients && (
-              <RecipientsSection
-                loginIds={loginIds}
-                open={recipientsOpen}
-                onToggle={() => setRecipientsOpen((v) => !v)}
-                onAdd={(id) =>
-                  setLoginIds((ids) => (ids.includes(id) ? ids : [...ids, id]))
-                }
-                onRemove={(id) =>
-                  setLoginIds((ids) => ids.filter((x) => x !== id))
-                }
-                excluded={
-                  pushType.id === "order_push" ? excludedIds : undefined
-                }
-                onExcludeAdd={(id) =>
-                  setExcludedIds((ids) =>
-                    ids.includes(id) ? ids : [...ids, id],
-                  )
-                }
-                onExcludeRemove={(id) =>
-                  setExcludedIds((ids) => ids.filter((x) => x !== id))
-                }
-              />
-            )}
+            {pushType.recipients &&
+              (pushType.recipientsNote ? (
+                <div
+                  id="ptc-recipients"
+                  className="mt-8 flex items-baseline gap-x-2.5 gap-y-1 rounded-lg bg-blue-tint px-5.5 py-4"
+                >
+                  <span className="text-[15px] font-semibold text-blue-dark">
+                    Recipients
+                  </span>
+                  <p className="text-[13.5px] leading-relaxed font-normal text-blue-dark">
+                    {pushType.recipientsNote}
+                  </p>
+                </div>
+              ) : (
+                <RecipientsSection
+                  loginIds={loginIds}
+                  open={recipientsOpen}
+                  onToggle={() => setRecipientsOpen((v) => !v)}
+                  onAdd={(id) =>
+                    setLoginIds((ids) =>
+                      ids.includes(id) ? ids : [...ids, id],
+                    )
+                  }
+                  onRemove={(id) =>
+                    setLoginIds((ids) => ids.filter((x) => x !== id))
+                  }
+                  excluded={
+                    pushType.id === "order_push" ? excludedIds : undefined
+                  }
+                  onExcludeAdd={(id) =>
+                    setExcludedIds((ids) =>
+                      ids.includes(id) ? ids : [...ids, id],
+                    )
+                  }
+                  onExcludeRemove={(id) =>
+                    setExcludedIds((ids) => ids.filter((x) => x !== id))
+                  }
+                />
+              ))}
 
             {pushType.globalTime && (
               <GlobalTimeSection
