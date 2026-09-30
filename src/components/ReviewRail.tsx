@@ -16,10 +16,8 @@ interface Props {
   onClose?: () => void;
   rows: FormRow[];
   pushType: PushTypeConfig;
-  /** Already excludes Order's excluded IDs — see PushConsole. */
-  recipientCount: number;
-  /** Order push only, 0 otherwise. */
-  excludedCount: number;
+  /** Who the run reaches, e.g. "10 recipients" or "subscribers of the word" — see PushConsole. */
+  audience: string;
   date: string;
   distributeNow: boolean;
   /** Order push's shared start time, used to compute each row's display time. */
@@ -47,8 +45,7 @@ export function ReviewRail({
   onClose,
   rows,
   pushType,
-  recipientCount,
-  excludedCount,
+  audience,
   date,
   distributeNow,
   globalHour,
@@ -212,8 +209,8 @@ export function ReviewRail({
             {date || "—"} JST ·{" "}
             {distributeNow
               ? "distribute_now ON, the job runs right away"
-              : "picked up within the next 10 minutes"}
-            {excludedCount > 0 && ` · excluding ${excludedCount}`}
+              : "picked up within the next 10 minutes"}{" "}
+            · {audience}
           </span>
         </p>
 
@@ -231,10 +228,7 @@ export function ReviewRail({
           )}
         >
           {rows.map((r, i) => {
-            const p = pushType.preview(r.values);
-            const recipients = pushType.recipients
-              ? `${recipientCount} recipients`
-              : `1 user (${r.values.target_user || "—"})`;
+            const p = pushType.preview(r);
             return (
               <Card
                 key={r.id}
@@ -255,7 +249,7 @@ export function ReviewRail({
                   {p.line}
                 </div>
                 <div className="border-t border-line-3 pt-[9px] text-[11.5px] font-light text-ink-4">
-                  {p.meta} · {recipients}
+                  {p.meta}
                 </div>
               </Card>
             );

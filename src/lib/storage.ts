@@ -1,31 +1,29 @@
 /** Keeps the last run settings between sends. Best effort: if the browser blocks storage,
  *  we just fall back to the defaults. */
 
-const KEY = "ptc.auto-app-push.settings";
+/** v2: the default lists became the guideline's. A new key lets those defaults reach everyone once. */
+const KEY = "ptc.settings.v2";
 
 export interface SavedSettings {
+  /** Empty when nothing usable was saved — the page then keeps its default list. */
   loginIds: string[];
   distributeNow: boolean;
   /** Order push's excluded login IDs — a tester's session data, not tied to any one type. */
   excludedIds: string[];
 }
 
+const ids = (value: unknown): string[] =>
+  Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+
 export function loadSettings(): SavedSettings | null {
   try {
     const raw = window.localStorage.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SavedSettings>;
-    const loginIds = Array.isArray(parsed.loginIds)
-      ? parsed.loginIds.map(String).filter(Boolean)
-      : [];
-    if (!loginIds.length) return null;
-    const excludedIds = Array.isArray(parsed.excludedIds)
-      ? parsed.excludedIds.map(String).filter(Boolean)
-      : [];
     return {
-      loginIds,
+      loginIds: ids(parsed.loginIds),
       distributeNow: parsed.distributeNow === true,
-      excludedIds,
+      excludedIds: ids(parsed.excludedIds),
     };
   } catch {
     return null;

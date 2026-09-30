@@ -1,4 +1,4 @@
-import type { PushPayload } from "@/lib/api";
+import type { CreatedEdition, PushPayload } from "@/lib/api";
 import type { PushTypeConfig } from "@/lib/pushTypes";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,8 +15,10 @@ import {
 
 interface Props {
   rows: FormRow[];
-  /** The exact body the API said 201 to. The 201 is empty, so this is the only record of the run. */
+  /** The exact body the API said 201 to — the record of the run when the 201 is empty. */
   payload: PushPayload;
+  /** What a 201 with a body handed back (Normal Push), in the order the editions were sent. */
+  created: CreatedEdition[] | null;
   server: Server;
   pushType: PushTypeConfig;
   onStartOver: () => void;
@@ -26,15 +28,17 @@ const tableHeaderClass =
   "border-b border-line-2 px-5 py-3.5 text-left text-[11px] font-semibold tracking-[0.06em] text-ink-4 uppercase";
 const tableDataCellClass = "border-b border-line-3 px-5 py-4 align-top";
 
+/** `HH:MM` out of an ISO time with its `+09:00` offset, read as written rather than re-rendered locally. */
+const clock = (iso: string) => /T(\d{2}:\d{2})/.exec(iso)?.[1] ?? iso;
+
 /** Auto App's kogyo link is reduced by the server before it writes the file, and the empty 201
- *  doesn't say so — show the value it will actually use, the way CLAUDE.md documents. Every other
- *  type reads straight off `pushType.preview`. */
+ *  doesn't say so — show the value it will actually use. Every other type reads `pushType.preview`. */
 function detailsFor(
   pushType: PushTypeConfig,
   row: FormRow | undefined,
 ): { title: string; line: string } {
   if (!row) return { title: "—", line: "—" };
-  const p = pushType.preview(row.values);
+  const p = pushType.preview(row);
   if (pushType.id === "auto_app_push" && row.values.kind === "kogyo") {
     return {
       title: p.title,
@@ -44,9 +48,43 @@ function detailsFor(
   return p;
 }
 
+/** What happened on the server, in plain words. It differs by push type and by server. */
+function whatHappened(
+  pushType: PushTypeConfig,
+  server: Server,
+  distributeNow: boolean,
+): string {
+  if (pushType.id === "auto_app_push")
+    return `The API accepted the run and wrote the delivery file on the server. Nothing has been sent. Right now the upload to S3 is switched off on the server, so the file goes no further and no push will arrive.${
+      distributeNow
+        ? " distribute_now was on; it has no effect until that upload is back."
+        : " Once it is back, the import job checks every 10 minutes, so a push can arrive up to ten minutes after the time you set."
+    }`;
+  if (pushType.id === "normal_push") {
+    if (server === "express")
+      return "ExpressJS checked the run and saved it in its own database. It does not deliver pushes, so nothing will arrive from this run.";
+    return `The API created the notifications and started delivery. Each one goes out during its one-hour window, only to accounts that follow the word.${
+      distributeNow
+        ? " distribute_now was on, so the server tries to publish 30 seconds after the request — for a window that has already started."
+        : " The server publishes at the next 10-minute tick inside each window."
+    }`;
+  }
+  return "The API accepted the run. This push type's endpoint is not confirmed with the backend team yet, so ask them what happens next.";
+}
+
+/** Why the numbers above are not a delivery count. */
+function readersNote(pushType: PushTypeConfig): string {
+  if (pushType.readers === "list")
+    return "“Login IDs sent” is not a count of people: each id has to match an active customer with the right notification setting on, and anyone who fails is dropped quietly.";
+  if (pushType.readers === "word")
+    return "Only accounts that follow the word receive it. If your test account does not follow it, nothing arrives and nothing says so.";
+  return "Each order line's member still has to meet the order condition and have the order setting on. Excluded accounts are skipped.";
+}
+
 export function DoneView({
   rows,
   payload,
+  created,
   server,
   pushType,
   onStartOver,
@@ -54,6 +92,7 @@ export function DoneView({
   const { date, editions, login_ids, exclude_login_ids, distribute_now } =
     payload;
   const runLabel = `STAG-${pushType.code}-${4820 + editions.length}`;
+  const noun = pushType.noun.toLowerCase();
 
   return (
     <div className="w-full overflow-y-auto px-5 py-9 sm:px-10 sm:py-14">
@@ -61,16 +100,12 @@ export function DoneView({
         SCHEDULED
       </Badge>
       <h2 className="mt-4 mb-2 text-[28px] font-semibold tracking-tight">
-        配信予約しました — {editions.length} {pushType.label} row(s) scheduled
+        配信予約しました — {editions.length} {pushType.label} {noun}
+        {editions.length === 1 ? "" : "s"} scheduled
       </h2>
       <p className="mb-8 text-[15px] leading-relaxed font-light text-ink-2">
-        The API accepted the run and wrote the delivery file on the server.
-        Nothing has been sent. Right now the upload to S3 is switched off on the
-        server, so the file goes no further and no push will arrive.
-        {distribute_now
-          ? " distribute_now was on; it has no effect until that upload is back."
-          : " Once it is back, the import job checks every 10 minutes, so a push can arrive up to ten minutes after the time you set."}{" "}
-        Nothing here touched PROD.
+        {whatHappened(pushType, server, distribute_now)} Nothing here touched
+        PROD.
       </p>
       <Card className="overflow-x-auto">
         <table className="w-full min-w-[720px] border-collapse text-sm">
@@ -78,13 +113,14 @@ export function DoneView({
             <tr>
               <th className={tableHeaderClass}>Scheduled for</th>
               <th className={tableHeaderClass}>Details</th>
-              <th className={tableHeaderClass}>Opens</th>
+              <th className={tableHeaderClass}>Opens / includes</th>
               <th className={tableHeaderClass}>Reference</th>
             </tr>
           </thead>
           <tbody>
             {editions.map((edition, i) => {
               const row = rows[i];
+              const made = created?.[i];
               const [hour, min] = edition.publish_hour_min as [number, number];
               const d = detailsFor(pushType, row);
               return (
@@ -92,7 +128,9 @@ export function DoneView({
                   <td
                     className={`${tableDataCellClass} font-semibold whitespace-nowrap tabular-nums`}
                   >
-                    {date} {pad(hour)}:{pad(min)} JST
+                    {made
+                      ? `${date} ${clock(made.period_start)}–${clock(made.period_end)} JST`
+                      : `${date} ${pad(hour)}:${pad(min)} JST`}
                   </td>
                   <td className={tableDataCellClass}>{d.title}</td>
                   <td
@@ -103,7 +141,11 @@ export function DoneView({
                   <td
                     className={`${tableDataCellClass} font-light break-words text-ink-4`}
                   >
-                    {row ? pushType.preview(row.values).meta : "—"}
+                    {made
+                      ? `Edition #${made.id} · ${made.topics_count} topic${made.topics_count === 1 ? "" : "s"}`
+                      : row
+                        ? pushType.preview(row).meta
+                        : "—"}
                   </td>
                 </tr>
               );
@@ -114,29 +156,16 @@ export function DoneView({
       <div className="mt-6 flex flex-wrap gap-7 text-[13px] font-light text-ink-3">
         <span>Sent via {SERVER_LABEL[server]}</span>
         <span>Environment — STAG</span>
-        {pushType.recipients ? (
-          <span>Login IDs sent — {login_ids.length}</span>
-        ) : (
-          <span>Target users — {editions.length}</span>
-        )}
-        {exclude_login_ids && exclude_login_ids.length > 0 && (
-          <span>Excluded — {exclude_login_ids.length}</span>
-        )}
+        {login_ids && <span>Login IDs sent — {login_ids.length}</span>}
+        {exclude_login_ids && <span>Excluded — {exclude_login_ids.length}</span>}
         <span>distribute_now — {distribute_now ? "yes" : "no"}</span>
-        <span>Run label — {runLabel}</span>
+        {!created && <span>Run label — {runLabel}</span>}
       </div>
       <p className="mt-6 text-[13.5px] leading-relaxed font-light text-ink-2">
-        {pushType.recipients ? (
-          <>
-            &ldquo;Login IDs sent&rdquo; is not a count of people, either: each
-            id has to match an active customer with the right notification
-            setting on, and anyone who fails is dropped quietly.
-          </>
-        ) : (
-          "Each target user still has to match the same notification-setting and account checks — a row here is not a guarantee of delivery."
-        )}{" "}
-        &ldquo;Run label&rdquo; is generated here for reference, not by the API
-        — the API itself never returns an id.
+        {readersNote(pushType)}{" "}
+        {created
+          ? "The edition numbers come from the server — give them to a backend engineer to look the delivery up."
+          : "“Run label” is generated here for reference, not by the API — the API itself returns no id."}
       </p>
       <Button className="mt-9" onClick={onStartOver}>
         Start another run
@@ -145,6 +174,12 @@ export function DoneView({
         <FieldHelp className="mt-3">
           We add 1 to each delivery ID for you, because the API counts the same
           deliv_id twice as one delivery and overwrites the earlier file.
+        </FieldHelp>
+      )}
+      {pushType.id === "normal_push" && (
+        <FieldHelp className="mt-3">
+          The same hours are now taken. Pick new times before sending again, or
+          the server rejects them.
         </FieldHelp>
       )}
     </div>
