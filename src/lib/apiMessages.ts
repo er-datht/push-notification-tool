@@ -32,6 +32,29 @@ const WORDING_BY_ERROR_ID: Record<string, Wording> = {
   'AP-0207': 'Enter a valid delivery time.',
   'AP-0208': 'Delivery time must be within 2 hours from now.',
   'AP-0209': 'Delivery time must be between 08:00 and 22:00 JST.',
+
+  // Normal Push (docs/API-DOC-normal-push.md). Whole request
+  'NP-0001': 'Some values were not accepted.',
+  'NP-0002': 'The API token was not accepted. Check it and try again.',
+  'NP-0003': 'Something went wrong. Reload the page and try again.',
+  'NP-0004': 'Something went wrong. Reload the page and try again.',
+  'NP-0005':
+    'The server could not create the push. Some notifications may already exist, so ask the backend team before sending again.',
+  'NP-0006':
+    'The e+ search API did not answer, so a show code could not be expanded. Notifications before it may already exist. A full code with a P021… part avoids the search.',
+  // Run settings (NP-0104 is ExpressJS only)
+  'NP-0101': 'Enter a valid date.',
+  'NP-0103': 'Add at least one notification.',
+  'NP-0104': 'distribute_now must be true or false.',
+  // One notification, or one show in it
+  'NP-0201': 'Add at least one show.',
+  'NP-0202': 'Enter the show code.',
+  'NP-0203': 'Enter a valid show code, like 9014500001-P0030056. Leave out the [公演] prefix.',
+  'NP-0204': 'Word ID must be a whole number above 0, at most 16 digits.',
+  'NP-0205': 'Pick preorder or firstcome.',
+  'NP-0206': 'Enter a valid delivery time.',
+  'NP-0207': 'Delivery time must be between 08:00 and 21:00 JST, so the one-hour window ends by 22:00.',
+  'NP-0208': 'That hour is already taken by another notification. Pick a different hour.',
 }
 
 const KIND_BY_CODE = Object.fromEntries(

@@ -1,11 +1,12 @@
 # UI field mapping
 
-How each input on the page maps to the payload sent to `POST /api/test_notification/auto_app_pushes`,
-and what the tester reads when the API rejects it.
+How each input on the page maps to the payload, and what the tester reads when the API rejects
+it — for the two push types with a confirmed contract: Auto App Push
+(`POST /api/test_notification/auto_app_pushes`, `AP-xxxx` ids) and Normal Push
+(`POST /api/test_notification/normal_pushes`, `NP-xxxx` ids, see the Normal Push section below).
 
-> This mapping is confirmed for Auto App Push only. The other 5 push types are assumed to share the
-> same fields and error catalog — see the "unconfirmed" note in `docs/API-DOC-auto-app-push.md` and
-> `src/lib/pushTypes.ts`.
+> The other 4 push types have no endpoint yet. Their fields are in
+> `docs/PUSH-TYPES-FIELD-REFERENCE.md`; their request keys are a guess — see `src/lib/pushTypes.ts`.
 
 The API's own `errors[].message` names payload keys — `link_item is required (AP-0204)` — that do
 not exist on the form. So the frontend keys on `error_id` (stable) and shows its own sentence, in
@@ -22,7 +23,7 @@ table does not list. Code: `src/lib/apiMessages.ts` (wording) and `splitErrors` 
 | Distribute now          | Run settings          | `distribute_now`               | —                              | — (accepted by the API, does nothing until the S3 upload is on) |
 | Notifications           | Cards                 | `editions[]`                   | `editions`                     | — (toast)                                                       |
 | Delivery time (JST)     | Card                  | `editions[n].publish_hour_min` | `editions[n].publish_hour_min` | `time` (hour + minute)                                          |
-| Delivery ID (deliv_id)  | Card                  | `editions[n].deliv_id`         | `editions[n].deliv_id`         | `delivId`                                                       |
+| Delivery ID (deliv_id)  | Card                  | `editions[n].deliv_id`         | `editions[n].deliv_id`         | `deliv_id`                                                      |
 | Notification text       | Card                  | `editions[n].title`            | `editions[n].title`            | `title`                                                         |
 | Where should the tap go | Card (Web/Kogyo/Word) | `editions[n].link_type`        | `editions[n].link_type`        | `kind`                                                          |
 | Destination URL         | Card, kind = Web      | `editions[n].link_item`        | `editions[n].link_item`        | `linkValue`                                                     |
@@ -49,12 +50,36 @@ server. `PushConsole` keeps the exact payload it posted and `DoneView` draws the
 | Opens              | `editions[n].link_item`; for Kogyo, reduced with `shortShowId` (`9041480001-P0030001P021001` → `904148-0001`) the way the server does before it writes the file |
 | Login IDs sent     | `login_ids.length` — what was sent, not who will get it                                                                                                         |
 
+## Normal Push
+
+Contract: `docs/API-DOC-normal-push.md`. There is **no `login_ids`** — sending it is `400 NP-0004`
+— so the Recipients area only shows a note. One card is one edition; its shows are sub-panels.
+
+| UI label              | Where on the page | Payload key                              | `errors[].field`                         | Marked input (`RowField`) |
+| --------------------- | ----------------- | ---------------------------------------- | ---------------------------------------- | ------------------------- |
+| Delivery date         | Run settings      | `date`                                   | `date`                                   | — (toast)                 |
+| Distribute now        | Run settings      | `distribute_now`                         | —                                        | —                         |
+| Notifications         | Cards             | `editions[]`                             | `editions`                               | — (toast)                 |
+| Delivery time (JST)   | Card              | `editions[n].publish_hour_min`           | `editions[n].publish_hour_min`           | `time` (hour + minute)    |
+| Shows                 | Card, show list   | `editions[n].shows[]`                    | `editions[n].shows`                      | `shows` (list error)      |
+| Show code (code)      | Show `m`          | `editions[n].shows[m].code`              | `editions[n].shows[m].code`              | `shows[m].code`           |
+| Word ID (performer_id)| Show `m`          | `editions[n].shows[m].performer_id`      | `editions[n].shows[m].performer_id`      | `shows[m].performer_id`   |
+| Type (hook)           | Show `m`          | `editions[n].shows[m].hook`              | `editions[n].shows[m].hook`              | `shows[m].hook`           |
+
+A pasted `[公演]` prefix is dropped from `code` before it is sent. Every show is sent, blank or not,
+so `shows[m]` is always show `m + 1` on the card.
+
+After a `201` the API answers `{ editions: [{ id, period_start, period_end, status, topics_count }] }`,
+one entry per edition in the order sent. The done screen shows each edition's number, its one-hour
+window (`period_start`–`period_end`, read from the `+09:00` string as written) and `topics_count`.
+
 ## Where a rejected run lands
 
 Execute is blocked locally first (`errorsFor` in `src/lib/types.ts`); the API is only reached
 when the form is clean. Either way the page scrolls to the first problem, top of the view, and
-focuses its first red input: the first card with an error, else the Recipients card, else the
-date box. A rejected token (`401`) keeps the review rail open instead, with the token field red.
+focuses its first red input: the first card with an error, else the Recipients card, else Order's
+start time, else the date box. A rejected token (`401`) keeps the review rail open instead, with the
+token field red.
 
 ## Error messages
 
@@ -88,6 +113,31 @@ date box. A rejected token (`401`) keeps the review rail open instead, with the 
 | `AP-0208`  | `publish_hour_min` | publish_hour_min must be within 2 hours | Delivery time must be within 2 hours from now.                     |
 | `AP-0209`  | `publish_hour_min` | publish_hour_min must be between …      | Delivery time must be between 08:00 and 22:00 JST.                 |
 
+### Normal Push (`NP-xxxx`)
+
+| `error_id` | `field`                     | Shown on UI                                                                                    |
+| ---------- | --------------------------- | ---------------------------------------------------------------------------------------------- |
+| `NP-0001`  | —                           | Some values were not accepted.                                                                 |
+| `NP-0002`  | —                           | The API token was not accepted. Check it and try again. _(the API token field turns red)_      |
+| `NP-0003`  | —                           | Something went wrong. Reload the page and try again.                                           |
+| `NP-0004`  | the unknown key             | Something went wrong. Reload the page and try again.                                           |
+| `NP-0005`  | —                           | The server could not create the push. Some notifications may already exist, so ask the backend team before sending again. |
+| `NP-0006`  | —                           | The e+ search API did not answer … A full code with a P021… part avoids the search.           |
+| `NP-0101`  | `date`                      | Enter a valid date.                                                                            |
+| `NP-0103`  | `editions`                  | Add at least one notification.                                                                |
+| `NP-0104`  | `distribute_now`            | distribute_now must be true or false. _(express only)_                                        |
+| `NP-0201`  | `editions[n].shows`         | Add at least one show.                                                                         |
+| `NP-0202`  | `editions[n].shows[m].code` | Enter the show code.                                                                           |
+| `NP-0203`  | `editions[n].shows[m].code` | Enter a valid show code, like 9014500001-P0030056. Leave out the [公演] prefix.                |
+| `NP-0204`  | `…shows[m].performer_id`    | Word ID must be a whole number above 0, at most 16 digits.                                     |
+| `NP-0205`  | `…shows[m].hook`            | Pick preorder or firstcome.                                                                    |
+| `NP-0206`  | `publish_hour_min`          | Enter a valid delivery time.                                                                   |
+| `NP-0207`  | `publish_hour_min`          | Delivery time must be between 08:00 and 21:00 JST, so the one-hour window ends by 22:00.      |
+| `NP-0208`  | `publish_hour_min`          | That hour is already taken by another notification. Pick a different hour.                     |
+
+The Express server answers a bad token and an unreadable body with `AP-0002` / `AP-0003` on every
+route (a shared-middleware quirk there), so those two keep their `AP-` wording.
+
 An id not in this table falls back to the API's `message` as-is (it ends with the id, which is
 enough for support to look up). `AP-0002` points at the API token field in the review rail, which
 the tester fills in; the toast carries the sentence, the field says "The API did not accept this
@@ -96,7 +146,7 @@ sentence; the technical cause goes to the browser console. A `field` under `edit
 not in the table above still shows on card `n`, in its "The API also said" block, so nothing is
 dropped.
 
-Our own route handler (`src/app/api/push/auto-app-push/route.ts`) answers in the same envelope,
+Our own route handler (`src/app/api/push/[type]/route.ts`) answers in the same envelope,
 without an `error_id`, so its `title` / `message` are shown as written:
 
 | `code`            | HTTP | When                                                                          | Shown on UI                                                                                    |
@@ -116,6 +166,8 @@ synthesizes the same two "can't even ask" cases itself instead of reading them o
 
 ## Adding a field or an error
 
-1. Payload key → input: `FIELD_BY_PAYLOAD_KEY` in `src/lib/api.ts`.
+1. Payload key → input: a field's `key` is its payload key, and an item field's `RowField` is its
+   path (`shows[m].code`); only a top-level key that differs needs `FIELD_BY_PAYLOAD_KEY` in
+   `src/lib/api.ts`.
 2. Wording: `WORDING_BY_ERROR_ID` in `src/lib/apiMessages.ts`.
 3. This file, and the one table in `docs/ERROR-MESSAGES.md`.
