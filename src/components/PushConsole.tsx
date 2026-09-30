@@ -13,10 +13,20 @@ import { Button } from "@/components/ui/button";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { useShell } from "@/lib/shell";
 import { cn } from "@/lib/utils";
-import { buildPayload, submitPush, type PushPayload } from "@/lib/api";
+import {
+  buildPayload,
+  submitPush,
+  type CreatedEdition,
+  type PushPayload,
+} from "@/lib/api";
 import { dismissApiErrors, toastApiError } from "@/lib/toast";
 import { loadSettings, saveSettings } from "@/lib/storage";
-import { PUSH_TYPE_ORDER, PUSH_TYPES, type PushTypeId } from "@/lib/pushTypes";
+import {
+  PUSH_TYPE_ORDER,
+  PUSH_TYPES,
+  type PushTypeConfig,
+  type PushTypeId,
+} from "@/lib/pushTypes";
 import {
   bumpDelivId,
   dateErrorFor,
@@ -31,9 +41,38 @@ import {
   type Server,
 } from "@/lib/types";
 
-const DEFAULT_LOGIN_IDS = ["e-plus-test01", "e-plus-test02", "e-plus-test03"];
+/** The guideline's `PushTest::Common.login_ids` — the test accounts Auto App and Score send to. */
+const DEFAULT_LOGIN_IDS = [
+  "502001185",
+  "502000539",
+  "602028303",
+  "602028310",
+  "602031006",
+  "602202796",
+  "602202802",
+  "602031013",
+  "602028327",
+  "602031631",
+];
+/** The guideline's `PushTest::Common.exclude_login_ids` — skipped by Order Push. */
+const DEFAULT_EXCLUDED_IDS = ["602031013", "602028327", "502001161", "602003515"];
 const DEFAULT_GLOBAL_HOUR = "15";
 const DEFAULT_GLOBAL_MIN = "30";
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** Who a run reaches, in a few words, for the review rail, the bottom bar and the confirm dialog. */
+function audienceFor(
+  pushType: PushTypeConfig,
+  loginIds: string[],
+  excludedIds: string[],
+): string {
+  if (pushType.readers === "list") return plural(loginIds.length, "recipient");
+  if (pushType.readers === "word") return "subscribers of the word";
+  return excludedIds.length
+    ? `the order-line members, skipping ${excludedIds.length} excluded`
+    : "the order-line members";
+}
 
 /** What the API said about one exact payload. Shown only while the form still matches it. */
 interface ApiVerdict {
@@ -52,10 +91,11 @@ function buildInitialRows(): {
   let id = 1;
   const rowsByType = {} as Record<PushTypeId, FormRow[]>;
   for (const typeId of PUSH_TYPE_ORDER) {
-    rowsByType[typeId] = PUSH_TYPES[typeId].samples.map((values, i) => ({
+    rowsByType[typeId] = PUSH_TYPES[typeId].samples.map((sample, i) => ({
       id: id++,
       collapsed: i > 0,
-      values,
+      values: sample.values,
+      items: (sample.items ?? []).map((values) => ({ id: id++, values })),
     }));
   }
   return { rowsByType, nextId: id };
@@ -84,7 +124,7 @@ export function PushConsole() {
   const [checked, setChecked] = useState(false);
   const [loginIds, setLoginIds] = useState<string[]>(DEFAULT_LOGIN_IDS);
   // Order push only, but kept here (not per-type) — it's the tester's session data, like loginIds.
-  const [excludedIds, setExcludedIds] = useState<string[]>([]);
+  const [excludedIds, setExcludedIds] = useState<string[]>(DEFAULT_EXCLUDED_IDS);
   const [rowsByType, setRowsByType] = useState(INITIAL.rowsByType);
   const [nextId, setNextId] = useState(INITIAL.nextId);
   const rows = rowsByType[pushTypeId];
@@ -96,8 +136,10 @@ export function PushConsole() {
   const [globalHour, setGlobalHour] = useState(DEFAULT_GLOBAL_HOUR);
   const [globalMin, setGlobalMin] = useState(DEFAULT_GLOBAL_MIN);
   const [submitting, setSubmitting] = useState(false);
-  // The payload the API said 201 to. Its 201 is empty, so this is the whole record of the run.
+  // The payload the API said 201 to. Auto App's 201 is empty, so this is the whole record of that run.
   const [sent, setSent] = useState<PushPayload | null>(null);
+  // What a 201 with a body handed back (Normal Push): the editions the server created.
+  const [created, setCreated] = useState<CreatedEdition[] | null>(null);
   const [apiVerdict, setApiVerdict] = useState<ApiVerdict | null>(null);
   // The DOM id of the first thing that needs fixing. A card below the fold gets marked red
   // without anyone seeing it, so after a blocked Execute the page moves there.
@@ -124,7 +166,7 @@ export function PushConsole() {
     resetDate();
     const saved = loadSettings();
     if (!saved) return;
-    setLoginIds(saved.loginIds);
+    if (saved.loginIds.length) setLoginIds(saved.loginIds);
     setDistributeNow(saved.distributeNow);
     setExcludedIds(saved.excludedIds);
   }, []);
@@ -176,12 +218,18 @@ export function PushConsole() {
     return local.map((e, i) => [...e, ...(apiRowErrors[i] ?? [])]);
   }, [rows, pushType, checked, date, apiRowErrors]);
 
-  const noRecipients = checked && pushType.recipients && loginIds.length === 0;
+  const needsIds = pushType.readers === "list";
+  const noRecipients = checked && needsIds && loginIds.length === 0;
   const dateError = checked ? dateErrorFor(date) : null;
   const globalTimeError =
     checked && pushType.globalTime
-      ? globalTimeErrorFor(globalHour, globalMin, pushType)
+      ? globalTimeErrorFor(globalHour, globalMin, pushType, date, rows.length)
       : null;
+  const audience = audienceFor(pushType, loginIds, excludedIds);
+  const itemCount = rows.reduce((n, r) => n + r.items.length, 0);
+  const itemsText = pushType.items
+    ? plural(itemCount, pushType.items.noun.toLowerCase())
+    : null;
   const tokenMissing = !apiToken.trim();
   const tokenError =
     checked && tokenMissing ? "Enter the API token." : apiTokenError;
@@ -210,19 +258,63 @@ export function PushConsole() {
     setRows((rs) => (rs.length > 1 ? rs.filter((r) => r.id !== id) : rs));
 
   const addRow = () => {
+    const group = pushType.items;
     setRows((rs) => [
       ...rs.map((r) => ({ ...r, collapsed: true })),
-      { id: nextId, collapsed: false, values: pushType.blank() },
+      {
+        id: nextId,
+        collapsed: false,
+        values: pushType.blank(),
+        items: group ? [{ id: nextId + 1, values: group.blank() }] : [],
+      },
     ]);
+    setNextId((n) => n + 2);
+  };
+
+  const patchItem = (rowId: number, itemId: number, key: string, value: string) =>
+    setRows((rs) =>
+      rs.map((r) =>
+        r.id === rowId
+          ? {
+              ...r,
+              items: r.items.map((it) =>
+                it.id === itemId
+                  ? { ...it, values: { ...it.values, [key]: value } }
+                  : it,
+              ),
+            }
+          : r,
+      ),
+    );
+
+  const addItem = (rowId: number) => {
+    const group = pushType.items;
+    if (!group) return;
+    setRows((rs) =>
+      rs.map((r) =>
+        r.id === rowId
+          ? { ...r, items: [...r.items, { id: nextId, values: group.blank() }] }
+          : r,
+      ),
+    );
     setNextId((n) => n + 1);
   };
 
+  const removeItem = (rowId: number, itemId: number) =>
+    setRows((rs) =>
+      rs.map((r) =>
+        r.id === rowId && r.items.length > 1
+          ? { ...r, items: r.items.filter((it) => it.id !== itemId) }
+          : r,
+      ),
+    );
+
   const tryExecute = () => {
     const errs = validateRows(rows, pushType, date);
-    const noIds = pushType.recipients && loginIds.length === 0;
+    const noIds = needsIds && loginIds.length === 0;
     const badDate = dateErrorFor(date);
     const badGlobalTime = pushType.globalTime
-      ? globalTimeErrorFor(globalHour, globalMin, pushType)
+      ? globalTimeErrorFor(globalHour, globalMin, pushType, date, rows.length)
       : null;
     setChecked(true);
     // A fresh Execute asks for a fresh verdict, even on the same payload.
@@ -236,17 +328,19 @@ export function PushConsole() {
       );
       // The problems are marked on the form, which the drawer would be covering.
       setReviewDrawer(false);
-      // A bad card goes to the top of the view. The date box and the Recipients card are near
-      // the top already, so they come after.
+      // A bad card goes to the top of the view. The date box, the Recipients card and the
+      // global time are near the top already, so they come after.
       const firstBadRow = rows.find((_, i) => errs[i].length > 0);
       setScrollTo(
         firstBadRow
           ? rowDomId(firstBadRow.id)
           : noIds
             ? "ptc-recipients"
-            : badDate
-              ? "ptc-date"
-              : null,
+            : badGlobalTime
+              ? "ptc-global-time"
+              : badDate
+                ? "ptc-date"
+                : null,
       );
       return;
     }
@@ -269,6 +363,7 @@ export function PushConsole() {
     if (res.ok) {
       setReviewDrawer(false);
       setSent(payload);
+      setCreated(res.created ?? null);
       setDone(true);
       // The done screen has no push-type list, so the header's menu button goes with it.
       setSideToggle(false);
@@ -286,8 +381,10 @@ export function PushConsole() {
         res.rowErrors[i]?.length ? { ...r, collapsed: false } : r,
       ),
     );
-    const aboutLoginIds = res.error.errors.some((e) =>
-      e.field?.startsWith("login_ids"),
+    const aboutLoginIds = res.error.errors.some(
+      (e) =>
+        e.field?.startsWith("login_ids") ||
+        e.field?.startsWith("exclude_login_ids"),
     );
     if (aboutLoginIds) setRecipientsOpen(true);
     const firstBadRow = rows.find((_, i) => res.rowErrors[i]?.length);
@@ -306,6 +403,7 @@ export function PushConsole() {
     setChecked(false);
     setConfirmOpen(false);
     setSent(null);
+    setCreated(null);
     resetDate();
     // The same deliv_id twice counts as one delivery (Auto App only — a no-op for every other
     // type, which has no deliv_id field), so give every row a new one.
@@ -324,6 +422,7 @@ export function PushConsole() {
     setDone(false);
     setConfirmOpen(false);
     setSent(null);
+    setCreated(null);
     setApiVerdict(null);
     setApiTokenError(null);
     setScrollTo(null);
@@ -337,11 +436,7 @@ export function PushConsole() {
       onClose={narrow ? () => setReviewDrawer(false) : undefined}
       rows={rows}
       pushType={pushType}
-      recipientCount={
-        loginIds.length -
-        (pushType.id === "order_push" ? excludedIds.length : 0)
-      }
-      excludedCount={pushType.id === "order_push" ? excludedIds.length : 0}
+      audience={audience}
       date={date}
       distributeNow={distributeNow}
       globalHour={globalHour}
@@ -373,6 +468,7 @@ export function PushConsole() {
         <DoneView
           rows={rows}
           payload={sent}
+          created={created}
           server={server}
           pushType={pushType}
           onStartOver={startOver}
@@ -419,69 +515,100 @@ export function PushConsole() {
             <p className="max-w-[64ch] text-[15px] leading-relaxed font-light text-ink-2">
               {pushType.description}
             </p>
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <span className="text-[12.5px] font-medium text-ink-4">
-                Recipients only receive it if
-              </span>
-              {pushType.prereqs.map((p) => (
-                <span
-                  key={p}
-                  className="rounded-lg border border-line-3 bg-card px-2.5 py-1 text-[12.5px] text-ink-2"
-                >
-                  {p}
-                </span>
-              ))}
-            </div>
+            <section aria-labelledby="ptc-common-heading" className="mt-9">
+              <h3
+                id="ptc-common-heading"
+                className="text-[17px] font-semibold"
+              >
+                Common settings
+              </h3>
+              <p className="mt-1 mb-4 text-[13px] font-light text-ink-4">
+                Shared by every push type. These values stay when you switch
+                types.
+              </p>
+              <div className="flex flex-col gap-5">
+                <RunSettings
+                  date={date}
+                  minDate={minDate}
+                  dateError={dateError}
+                  onDateChange={setDate}
+                  distributeNow={distributeNow}
+                  onDistributeNowChange={setDistributeNow}
+                  distributeWorks={pushType.id === "normal_push"}
+                  prereqs={pushType.prereqs}
+                />
 
-            <RunSettings
-              date={date}
-              minDate={minDate}
-              dateError={dateError}
-              onDateChange={setDate}
-              distributeNow={distributeNow}
-              onDistributeNowChange={setDistributeNow}
-            />
+                {pushType.readersNote && (
+                  <div
+                    id={
+                      pushType.readers === "word" ? "ptc-recipients" : undefined
+                    }
+                    className="flex items-baseline gap-x-2.5 gap-y-1 rounded-lg bg-blue-tint px-5.5 py-4"
+                  >
+                    <span className="text-[15px] font-semibold text-blue-dark">
+                      Recipients
+                    </span>
+                    <p className="text-[13.5px] leading-relaxed font-normal text-blue-dark">
+                      {pushType.readersNote}
+                    </p>
+                  </div>
+                )}
+                {pushType.readers !== "word" && (
+                  <RecipientsSection
+                    loginIds={pushType.readers === "list" ? loginIds : undefined}
+                    open={recipientsOpen}
+                    onToggle={() => setRecipientsOpen((v) => !v)}
+                    onAdd={(id) =>
+                      setLoginIds((ids) =>
+                        ids.includes(id) ? ids : [...ids, id],
+                      )
+                    }
+                    onRemove={(id) =>
+                      setLoginIds((ids) => ids.filter((x) => x !== id))
+                    }
+                    excluded={
+                      pushType.readers === "order" ? excludedIds : undefined
+                    }
+                    onExcludeAdd={(id) =>
+                      setExcludedIds((ids) =>
+                        ids.includes(id) ? ids : [...ids, id],
+                      )
+                    }
+                    onExcludeRemove={(id) =>
+                      setExcludedIds((ids) => ids.filter((x) => x !== id))
+                    }
+                  />
+                )}
+              </div>
+            </section>
 
-            {pushType.recipients && (
-              <RecipientsSection
-                loginIds={loginIds}
-                open={recipientsOpen}
-                onToggle={() => setRecipientsOpen((v) => !v)}
-                onAdd={(id) =>
-                  setLoginIds((ids) => (ids.includes(id) ? ids : [...ids, id]))
-                }
-                onRemove={(id) =>
-                  setLoginIds((ids) => ids.filter((x) => x !== id))
-                }
-                excluded={
-                  pushType.id === "order_push" ? excludedIds : undefined
-                }
-                onExcludeAdd={(id) =>
-                  setExcludedIds((ids) =>
-                    ids.includes(id) ? ids : [...ids, id],
-                  )
-                }
-                onExcludeRemove={(id) =>
-                  setExcludedIds((ids) => ids.filter((x) => x !== id))
-                }
-              />
-            )}
+            <section aria-labelledby="ptc-specific-heading" className="mt-12">
+              <h3
+                id="ptc-specific-heading"
+                className="text-[17px] font-semibold"
+              >
+                {pushType.label} settings
+              </h3>
+              <p className="mt-1 mb-4 text-[13px] font-light text-ink-4">
+                Only for this push type.{" "}
+                {pushType.items
+                  ? `Each ${pushType.noun.toLowerCase()} holds one or more ${pushType.items.noun.toLowerCase()}s.`
+                  : `Each ${pushType.noun.toLowerCase()} is one push.`}
+              </p>
 
-            {pushType.globalTime && (
-              <GlobalTimeSection
-                pushType={pushType}
-                rows={rows}
-                hour={globalHour}
-                min={globalMin}
-                onHourChange={setGlobalHour}
-                onMinChange={setGlobalMin}
-                error={globalTimeError}
-              />
-            )}
-
-            <div className="mt-10 mb-4 flex items-baseline justify-between">
-              <h3 className="text-[17px] font-semibold">{pushType.noun}s</h3>
-            </div>
+              {pushType.globalTime && (
+                <div className="mb-5">
+                  <GlobalTimeSection
+                    pushType={pushType}
+                    rows={rows}
+                    hour={globalHour}
+                    min={globalMin}
+                    onHourChange={setGlobalHour}
+                    onMinChange={setGlobalMin}
+                    error={globalTimeError}
+                  />
+                </div>
+              )}
 
             <div className="flex flex-col gap-[18px]">
               {rows.map((row, i) => (
@@ -498,6 +625,11 @@ export function PushConsole() {
                       : undefined
                   }
                   onPatch={(key, value) => patchRow(row.id, key, value)}
+                  onPatchItem={(itemId, key, value) =>
+                    patchItem(row.id, itemId, key, value)
+                  }
+                  onAddItem={() => addItem(row.id)}
+                  onRemoveItem={(itemId) => removeItem(row.id, itemId)}
                   onToggleCollapse={() => toggleRow(row.id)}
                   onRemove={() => removeRow(row.id)}
                 />
@@ -511,29 +643,17 @@ export function PushConsole() {
             >
               + Add {pushType.noun.toLowerCase()}
             </Button>
+            </section>
           </main>
 
           {narrow ? (
             <div className="sticky bottom-0 z-[5] flex flex-wrap items-center gap-x-5 gap-y-2.5 border-t bg-card px-5 py-3 shadow-bar sm:px-8">
               <p className="flex-[1_1_240px] text-[13px] leading-normal font-light text-ink-3">
                 <strong className="font-semibold text-foreground">
-                  {rows.length} {pushType.noun.toLowerCase()}
-                  {rows.length === 1 ? "" : "s"}
-                </strong>{" "}
-                {pushType.recipients ? (
-                  <>
-                    ·{" "}
-                    {loginIds.length -
-                      (pushType.id === "order_push"
-                        ? excludedIds.length
-                        : 0)}{" "}
-                    recipient
-                    {loginIds.length === 1 ? "" : "s"}{" "}
-                  </>
-                ) : (
-                  "· target user per row "
-                )}
-                · {date || "—"} JST · {SERVER_LABEL[server]}
+                  {plural(rows.length, pushType.noun.toLowerCase())}
+                </strong>
+                {itemsText && ` · ${itemsText}`} · {audience} · {date || "—"}{" "}
+                JST · {SERVER_LABEL[server]}
               </p>
               <Button
                 size="lg"
@@ -584,15 +704,13 @@ export function PushConsole() {
 
       <ConfirmDialog
         open={confirmOpen}
-        title={`Execute ${rows.length} ${pushType.label} row(s)?`}
-        body={`This writes the delivery file on ${SERVER_LABEL[server]} in STAG for ${date} JST, for ${
-          pushType.recipients
-            ? `${loginIds.length - (pushType.id === "order_push" ? excludedIds.length : 0)} test account(s)`
-            : "the target user on each row"
-        }${pushType.id === "order_push" && excludedIds.length ? `, skipping ${excludedIds.length} excluded` : ""}. ${
+        title={`Execute ${plural(rows.length, `${pushType.label} ${pushType.noun.toLowerCase()}`)}?`}
+        body={`This sends ${plural(rows.length, pushType.noun.toLowerCase())}${
+          itemsText ? ` (${itemsText})` : ""
+        } to ${SERVER_LABEL[server]} in STAG for ${date} JST, for ${audience}. ${
           distributeNow
-            ? "distribute_now is ON, so the job runs right away."
-            : "The import job picks it up within the next 10 minutes."
+            ? "distribute_now is ON, so the server tries to publish right away."
+            : "The batch picks it up within the next 10 minutes."
         } After that you cannot take it back.`}
         onCancel={() => setConfirmOpen(false)}
         onConfirm={execute}

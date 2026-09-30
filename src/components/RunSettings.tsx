@@ -13,8 +13,13 @@ interface Props {
   onDateChange: (v: string) => void;
   distributeNow: boolean;
   onDistributeNowChange: (v: boolean) => void;
+  /** True where the server really acts on distribute_now (Normal Push). */
+  distributeWorks: boolean;
+  /** The user settings that must be ON for this push type, shown read-only. */
+  prereqs: string[];
 }
 
+/** The settings every push type shares (proposal §4.2): environment, date, distribute_now, prerequisites. */
 export function RunSettings({
   date,
   minDate,
@@ -22,9 +27,11 @@ export function RunSettings({
   onDateChange,
   distributeNow,
   onDistributeNowChange,
+  distributeWorks,
+  prereqs,
 }: Props) {
   return (
-    <Card className="mt-8">
+    <Card>
       <div className="flex items-center gap-3 px-5.5 pt-[18px]">
         <span className="text-[15px] font-semibold">Run settings</span>
         <Badge variant="secondary">Asia/Tokyo</Badge>
@@ -46,8 +53,7 @@ export function RunSettings({
             <FieldError messages={[dateError]} />
           ) : (
             <FieldHelp className="min-[700px]:max-w-[34ch]">
-              All times on this page are JST. The import job only takes files
-              due within 2 hours, so in practice this is always today.
+              All times on this page are JST. Defaults to today.
             </FieldHelp>
           )}
         </div>
@@ -67,11 +73,42 @@ export function RunSettings({
             配信を今すぐ実行 — run the job right away
             <br />
             <span className="text-xs font-light text-ink-4">
-              distribute_now. Skips the 10-minute wait once delivery is on.
-              The server accepts it but it does nothing yet.
+              {distributeWorks
+                ? "distribute_now. The server tries to publish 30 seconds after the request instead of at the next 10-minute tick — only for a window that has already started."
+                : "distribute_now. Skips the 10-minute wait once delivery is on. The server accepts it but it does nothing yet."}
             </span>
           </span>
         </label>
+
+        <div className="min-[700px]:col-span-2">
+          <span className="text-[12.5px] font-medium text-ink-4">
+            Environment
+          </span>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <span className="rounded-lg border border-line-3 bg-card px-2.5 py-1 text-[12.5px] font-semibold text-ink-2">
+              STAG
+            </span>
+            <span className="text-[12.5px] font-light text-ink-4">
+              Fixed for now. Nothing here touches PROD.
+            </span>
+          </div>
+        </div>
+
+        <div className="min-[700px]:col-span-2">
+          <span className="text-[12.5px] font-medium text-ink-4">
+            Must be ON for the test account
+          </span>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            {prereqs.map((p) => (
+              <span
+                key={p}
+                className="rounded-lg border border-line-3 bg-card px-2.5 py-1 text-[12.5px] text-ink-2"
+              >
+                {p}
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
     </Card>
   );

@@ -1,29 +1,26 @@
 /**
- * One entry per push type in the sidebar, ported from the Claude Design mockup
- * (`push-tool-console v2.dc.html`, `TYPES` array) — that file is the spec for `fields`,
- * `blank`, `samples` and `preview`, not an example to riff on.
+ * One entry per push type in the sidebar. Which fields each form has comes from the e+ Cloud
+ * guideline's Rails commands (`PushTest::Common.create_*_edition`) — see
+ * `docs/PUSH-TYPES-FIELD-REFERENCE.md`.
  *
- * Auto App Push is the only type with a confirmed backend contract (`backendConfirmed: true`).
- * For the other five, nothing on either server (ecs-api or express) implements them yet, so
- * `ecsForwardPath`/`routeSlug`/`expressPath` are guesses built from the `auto_app_push` naming
- * pattern. Three more things are guessed, not confirmed, about the PAYLOAD shape itself
- * (see `buildPayload` in `src/lib/api.ts`):
- *   - whether `sub_type` is really sent as a payload key for these five (unlike Auto App, whose
- *     sub type is implied by the endpoint and never sent)
- *   - whether Score really omits `login_ids` entirely in favor of a per-edition `target_user`
- *   - whether `exclude_login_ids` is the right key name for Order's exclusion list
- * All three are reasonable extrapolations from the backend's internal `NOTIFICATIONS.md`, none
- * are backend-confirmed.
+ * Confirmed contracts: Auto App Push (`docs/API-DOC-auto-app-push.md`) and Normal Push
+ * (`docs/API-DOC-normal-push.md`). The other four have no endpoint on either server yet, so their
+ * paths and request keys are guesses (`backendConfirmed: false`):
+ *   - In store and Score reuse Normal's show keys (`code` / `performer_id` / `hook`), because the
+ *     guideline builds all three from the same `[code, word, type]` show triple.
+ *   - News keeps `article_id` / `word_id` / `title`; Order uses `status` and `order_lines[]`.
  */
 
 import {
-  eventField,
+  codeField,
+  digitsField,
   HOUR,
   MIN,
+  performerField,
   wordField,
   type FieldConfig,
 } from "@/lib/fields";
-import { LINKS, type LinkKind } from "@/lib/types";
+import { hookKind, LINKS, type FormRow, type LinkKind } from "@/lib/types";
 
 export type PushTypeId =
   | "auto_app_push"
@@ -39,6 +36,32 @@ export interface PreviewCard {
   meta: string;
 }
 
+/**
+ * How a push type finds its readers:
+ * - `list`  — the Recipients list the form sends as `login_ids` (Auto App, Score).
+ * - `word`  — everyone who follows the word; the form sends no `login_ids` (Normal, In store, News).
+ * - `order` — the member on each order line; the form sends only `exclude_login_ids` (Order).
+ */
+export type Readers = "list" | "word" | "order";
+
+/** A list of sub-items inside one notification: Normal/In store/Score shows, Order's order lines. */
+export interface ItemGroupConfig {
+  /** The payload key the list is sent under. */
+  key: "shows" | "order_lines";
+  /** "Show" / "Order line" — the sub-panel title and the "+ Add …" button. */
+  noun: string;
+  fields: FieldConfig[];
+  blank: () => Record<string, string>;
+  /** Values every item carries without an input (In store's `hook: in_store`). Shown read-only, sent. */
+  fixed?: Record<string, string>;
+}
+
+/** A seed row: the row's own values, plus its items when the type has an item list. */
+export interface SampleRow {
+  values: Record<string, string>;
+  items?: Record<string, string>[];
+}
+
 export interface PushTypeConfig {
   id: PushTypeId;
   /** Sidebar label and page heading. */
@@ -50,29 +73,33 @@ export interface PushTypeConfig {
   /** Shown as a "CATEGORY · {category}" badge next to the page heading. */
   category: string;
   /** Drives "+ Add {noun}", "{noun}s" section heading, and each row's card label. */
-  noun: "Notification" | "Order";
+  noun: "Notification" | "Status block";
   /** Shown under the page heading. */
   description: string;
   /** Short chips under the heading/category badge, e.g. "push_score_weekly is ON". */
   prereqs: string[];
-  /** False only for Score — it targets one user per row via `target_user`, not a shared list. */
-  recipients: boolean;
-  /** True only for Order — one shared Hour/Minute for the whole run, no per-row time fields. */
+  readers: Readers;
+  /** Shown in place of the Recipients list for `word` and `order` types. */
+  readersNote?: string;
+  /** True only for Order — one shared start time for the whole run, no per-row time fields. */
   globalTime: boolean;
   /** The JST window a delivery time must fall inside, in minutes from midnight. */
   windowStartMin: number;
   windowEndMin: number;
-  /** How far ahead of now a time may be. Only Auto App's contract documents this. */
+  /** How far ahead of now a time may be (the guideline's two-hour resend rule). */
   leadMs?: number;
-  /** The row's real fields, in render order. `HOUR`/`MIN` are included for validation/payload
-   *  purposes but are rendered by a dedicated time-group widget, not the generic field loop. */
+  /** A time in the past is fine (Normal Push: the one-hour window may already have started). */
+  allowPast?: boolean;
+  /** The row's own fields, in render order. `HOUR`/`MIN` are rendered by the time widget. */
   fields: FieldConfig[];
-  /** Default values for a freshly added row. */
+  /** The list of sub-items inside each notification, when the type has one. */
+  items?: ItemGroupConfig;
+  /** Default values for a freshly added row (its first item comes from `items.blank()`). */
   blank: () => Record<string, string>;
   /** Seed rows shown the first time this type is opened. */
-  samples: Record<string, string>[];
-  /** The review-rail / done-screen card body for one row. Bespoke copy per type, not mechanically derived from `fields`. */
-  preview: (values: Record<string, string>) => PreviewCard;
+  samples: SampleRow[];
+  /** The review-rail / done-screen card body for one row. */
+  preview: (row: FormRow) => PreviewCard;
   /** Path our own route handler forwards to on ecs-api. */
   ecsForwardPath: string;
   /** Path segment for our proxy route: `/api/push/{routeSlug}`. */
@@ -82,6 +109,11 @@ export interface PushTypeConfig {
   /** False until a backend team confirms the endpoint exists. */
   backendConfirmed: boolean;
 }
+
+const TWO_HOURS = 2 * 60 * 60 * 1000;
+
+const WORD_NOTE =
+  "No recipient list for this type. The server sends to every account subscribed to the show's word ID — make sure your test accounts subscribe to it.";
 
 const WEB_KOGYO_WORD: FieldConfig = {
   key: "kind",
@@ -103,7 +135,43 @@ const LINK_VALUE: FieldConfig = {
   link: true,
 };
 
+const HOOK_FIELD: FieldConfig = {
+  key: "hook",
+  label: "Type (hook)",
+  span: 12,
+  required: true,
+  seg: [
+    { value: "preorder", label: "preorder" },
+    { value: "firstcome", label: "firstcome" },
+  ],
+};
+
 const dash = (v: string | undefined) => v || "—";
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** Up to two values, then "+N more" — keeps a preview line short. */
+function listShort(values: string[]): string {
+  const shown = values.filter(Boolean);
+  if (!shown.length) return "—";
+  const head = shown.slice(0, 2).join(", ");
+  return shown.length > 2 ? `${head} +${shown.length - 2} more` : head;
+}
+
+const show = (
+  code: string,
+  performer_id: string,
+  hook?: string,
+): Record<string, string> =>
+  hook ? { code, performer_id, hook } : { code, performer_id };
+
+function showsPreview(row: FormRow): PreviewCard {
+  const kind = hookKind(row.items) ?? "—";
+  return {
+    title: `${kind} · ${plural(row.items.length, "show")}`,
+    line: listShort(row.items.map((i) => i.values.code)),
+    meta: `word ${listShort([...new Set(row.items.map((i) => i.values.performer_id))])}`,
+  };
+}
 
 export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
   auto_app_push: {
@@ -116,11 +184,11 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     description:
       "A deep-link notification with your own text. The tap opens an e+ web page, a kogyo or a word page.",
     prereqs: ["push_score_weekly is ON", "Push is enabled for the user in DB"],
-    recipients: true,
+    readers: "list",
     globalTime: false,
     windowStartMin: 8 * 60,
     windowEndMin: 22 * 60,
-    leadMs: 2 * 60 * 60 * 1000,
+    leadMs: TWO_HOURS,
     fields: [
       HOUR,
       MIN,
@@ -133,7 +201,6 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
         requiredMessage:
           "Enter a delivery ID. The batch uses it to find the campaign.",
       },
-      { key: "_sub", label: "Sub type", span: 4, fixed: "auto_app_push" },
       {
         key: "title",
         label: "Notification text (title)",
@@ -155,29 +222,33 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     }),
     samples: [
       {
-        hour: "15",
-        min: "30",
-        deliv_id: "H020064377",
-        title: "イープラスのWEBページへ遷移します。",
-        kind: "web",
-        linkValue: "https://eplus.jp/",
+        values: {
+          hour: "15",
+          min: "30",
+          deliv_id: "H020064377",
+          title: "イープラスのWEBページへ遷移します。",
+          kind: "web",
+          linkValue: "https://eplus.jp/",
+        },
       },
       {
-        hour: "15",
-        min: "35",
-        deliv_id: "H020064378",
-        title: "スマチケ公演バンドルをご紹介",
-        kind: "kogyo",
-        linkValue: "9041480001-P0030001P021001",
+        values: {
+          hour: "15",
+          min: "35",
+          deliv_id: "H020064378",
+          title: "スマチケ公演バンドルをご紹介",
+          kind: "kogyo",
+          linkValue: "9041480001-P0030001P021001",
+        },
       },
     ],
-    preview: (v) => {
+    preview: ({ values: v }) => {
       const kind = (v.kind || "web") as LinkKind;
       const L = LINKS[kind];
       return {
         title: v.title || "(no notification text)",
         line: `${L.line} — ${v.linkValue || "(empty)"}`,
-        meta: `deliv_id ${dash(v.deliv_id)} · sub_type auto_app_push · link_type ${L.code}`,
+        meta: `deliv_id ${dash(v.deliv_id)} · link_type ${L.code}`,
       };
     },
     ecsForwardPath: "/api/test_notification/auto_app_pushes",
@@ -194,64 +265,48 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     category: "check",
     noun: "Notification",
     description:
-      "Sale-start alert for subscribers of a word — first-come, pre-order, or a mixed sale.",
+      "Sale-start alert for subscribers of a word. One notification holds one or more shows; two shows with different types make a mixed push.",
     prereqs: [
       "Notification setting (check) is ON",
       "User subscribes to the word",
     ],
-    recipients: true,
+    readers: "word",
+    readersNote: WORD_NOTE,
     globalTime: false,
+    // The time starts a one-hour window, and the server only publishes until 22:00.
     windowStartMin: 8 * 60,
-    windowEndMin: 21 * 60 + 59,
-    fields: [
-      HOUR,
-      MIN,
-      {
-        key: "sub_type",
-        label: "Type (sub_type)",
-        span: 8,
-        required: true,
-        seg: [
-          { value: "firstcome", label: "firstcome" },
-          { value: "preorder", label: "preorder" },
-          { value: "mixed", label: "mixed (sale, word)" },
-        ],
-      },
-      eventField(6),
-      wordField(6, ["2762", "1533", "75223", "405"]),
-    ],
-    blank: () => ({
-      hour: "15",
-      min: "40",
-      sub_type: "preorder",
-      target_event: "",
-      word_id: "2762",
-    }),
+    windowEndMin: 21 * 60,
+    allowPast: true,
+    fields: [HOUR, MIN],
+    items: {
+      key: "shows",
+      noun: "Show",
+      fields: [
+        codeField(6),
+        performerField(6, ["2762", "1533", "75223", "405"]),
+        HOOK_FIELD,
+      ],
+      blank: () => ({ code: "", performer_id: "2762", hook: "preorder" }),
+    },
+    blank: () => ({ hour: "17", min: "00" }),
     samples: [
       {
-        hour: "15",
-        min: "30",
-        sub_type: "preorder",
-        target_event: "1610580031-P0030114",
-        word_id: "2762",
+        values: { hour: "17", min: "00" },
+        items: [
+          show("9014500001-P0030056", "2762", "firstcome"),
+          show("9014500001-P0030065", "2762", "preorder"),
+        ],
       },
       {
-        hour: "15",
-        min: "30",
-        sub_type: "firstcome",
-        target_event: "9044500001-P0030001",
-        word_id: "2762",
+        values: { hour: "18", min: "00" },
+        items: [show("9011910001-P0030007P021005", "75223", "preorder")],
       },
     ],
-    preview: (v) => ({
-      title: `${v.sub_type || ""} · ${v.target_event || "(no event)"}`,
-      line: `Subscribers of word ${dash(v.word_id)}`,
-      meta: "category check",
-    }),
+    preview: showsPreview,
     ecsForwardPath: "/api/test_notification/normal_pushes",
     routeSlug: "normal-push",
     expressPath: "/api/notifications/normal-pushes",
-    backendConfirmed: false,
+    backendConfirmed: true,
   },
 
   last_minute_push: {
@@ -262,59 +317,40 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     category: "check",
     noun: "Notification",
     description:
-      "Final-call alert for in-store sales, sent to subscribers of the word shortly before the event.",
+      "Final-call alert for in-store sales (\"In store\" in the guideline). One notification holds one or more shows.",
     prereqs: [
       "Notification setting (check) is ON",
       "User subscribes to the word",
     ],
-    recipients: true,
+    readers: "word",
+    readersNote: WORD_NOTE,
     globalTime: false,
     windowStartMin: 8 * 60,
     windowEndMin: 22 * 60,
-    fields: [
-      HOUR,
-      MIN,
-      {
-        key: "sub_type",
-        label: "Type (sub_type)",
-        span: 8,
-        required: true,
-        seg: [
-          { value: "in_store", label: "in_store" },
-          { value: "in_store_mixed", label: "in_store (sale, word)" },
-        ],
-      },
-      eventField(6),
-      wordField(6, ["75223", "23542", "2762"]),
-    ],
-    blank: () => ({
-      hour: "15",
-      min: "40",
-      sub_type: "in_store",
-      target_event: "",
-      word_id: "23542",
-    }),
+    leadMs: TWO_HOURS,
+    fields: [HOUR, MIN],
+    items: {
+      key: "shows",
+      noun: "Show",
+      fields: [codeField(6), performerField(6, ["75223", "23542"])],
+      blank: () => ({ code: "", performer_id: "75223" }),
+      fixed: { hook: "in_store" },
+    },
+    blank: () => ({ hour: "16", min: "05" }),
     samples: [
       {
-        hour: "15",
-        min: "30",
-        sub_type: "in_store",
-        target_event: "1610580031-P0030114",
-        word_id: "23542",
+        values: { hour: "16", min: "05" },
+        items: [show("9063440001-P0030012P021001", "75223")],
       },
       {
-        hour: "15",
-        min: "35",
-        sub_type: "in_store",
-        target_event: "9044500001-P0030001",
-        word_id: "23542",
+        values: { hour: "16", min: "10" },
+        items: [
+          show("1610580031-P0030117", "23542"),
+          show("9032420001-P0030001", "23542"),
+        ],
       },
     ],
-    preview: (v) => ({
-      title: `${v.sub_type || ""} · ${v.target_event || "(no event)"}`,
-      line: `Subscribers of word ${dash(v.word_id)}`,
-      meta: "category check",
-    }),
+    preview: (row) => ({ ...showsPreview(row), title: `in_store · ${plural(row.items.length, "show")}` }),
     ecsForwardPath: "/api/test_notification/last_minute_pushes",
     routeSlug: "last-minute-push",
     expressPath: "/api/notifications/last-minute-pushes",
@@ -329,67 +365,39 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     category: "score",
     noun: "Notification",
     description:
-      "Recommendation push driven by a user's score. Each row targets one user directly.",
+      "Recommendation push sent to the Recipients list. One notification holds one or more shows.",
     prereqs: ["push_score_weekly is ON", "Push is enabled for the user in DB"],
-    recipients: false,
+    readers: "list",
     globalTime: false,
     windowStartMin: 8 * 60,
     windowEndMin: 21 * 60 + 59,
-    fields: [
-      HOUR,
-      MIN,
+    leadMs: TWO_HOURS,
+    fields: [HOUR, MIN],
+    items: {
+      key: "shows",
+      noun: "Show",
+      fields: [
+        codeField(6),
+        performerField(6, ["2762", "1533", "75223"]),
+        HOOK_FIELD,
+      ],
+      blank: () => ({ code: "", performer_id: "2762", hook: "preorder" }),
+    },
+    blank: () => ({ hour: "17", min: "50" }),
+    samples: [
       {
-        key: "sub_type",
-        label: "Type (sub_type)",
-        span: 8,
-        required: true,
-        seg: [
-          { value: "score_preorder", label: "score_preorder" },
-          { value: "score_firstcome", label: "score_firstcome" },
-          { value: "score_mixed", label: "score_mixed" },
+        values: { hour: "17", min: "50" },
+        items: [
+          show("9014500001-P0030056", "2762", "firstcome"),
+          show("9014500001-P0030065", "2762", "preorder"),
         ],
       },
       {
-        key: "target_user",
-        label: "Target user (login ID)",
-        span: 4,
-        required: true,
-        placeholder: "e-plus-test01",
-      },
-      eventField(4),
-      wordField(4),
-    ],
-    blank: () => ({
-      hour: "15",
-      min: "40",
-      sub_type: "score_preorder",
-      target_user: "e-plus-test01",
-      target_event: "",
-      word_id: "",
-    }),
-    samples: [
-      {
-        hour: "15",
-        min: "30",
-        sub_type: "score_preorder",
-        target_user: "e-plus-test01",
-        target_event: "1610580031-P0030114",
-        word_id: "23542",
-      },
-      {
-        hour: "15",
-        min: "35",
-        sub_type: "score_firstcome",
-        target_user: "e-plus-test02",
-        target_event: "9044500001-P0030001",
-        word_id: "23542",
+        values: { hour: "18", min: "00" },
+        items: [show("1610580031-P0030118P021001", "75223", "preorder")],
       },
     ],
-    preview: (v) => ({
-      title: `${v.sub_type || ""} → ${v.target_user || "(no user)"}`,
-      line: `Event ${dash(v.target_event)}`,
-      meta: `word_id ${dash(v.word_id)}`,
-    }),
+    preview: showsPreview,
     ecsForwardPath: "/api/test_notification/score_pushes",
     routeSlug: "score-push",
     expressPath: "/api/notifications/score-pushes",
@@ -409,34 +417,37 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
       "Notification setting (by_word) is ON",
       "User subscribes to the word",
     ],
-    recipients: true,
+    readers: "word",
+    readersNote:
+      "No recipient list for this type. The server sends to every account subscribed to the word ID — make sure your test accounts subscribe to it.",
     globalTime: false,
     windowStartMin: 8 * 60,
     windowEndMin: 22 * 60,
+    leadMs: TWO_HOURS,
     fields: [
       HOUR,
       MIN,
       {
         key: "article_id",
         label: "Article ID (article_id)",
-        span: 4,
+        span: 6,
         required: true,
         numeric: true,
         check: "digits",
+        sendAs: "number",
         placeholder: "239541",
       },
-      { key: "_sub", label: "Type", span: 4, fixed: "spice" },
+      wordField(6, ["2762"]),
       {
         key: "title",
-        label: "Headline (title)",
+        label: "Title (title)",
         span: 12,
         required: true,
         placeholder: "2020_06_GA確認用_ワードへ",
       },
-      wordField(6, ["2762"]),
     ],
     blank: () => ({
-      hour: "15",
+      hour: "16",
       min: "40",
       article_id: "",
       word_id: "2762",
@@ -444,17 +455,19 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     }),
     samples: [
       {
-        hour: "15",
-        min: "35",
-        article_id: "239541",
-        word_id: "2762",
-        title: "2020_06_GA確認用_ワードへ",
+        values: {
+          hour: "16",
+          min: "40",
+          article_id: "239541",
+          word_id: "2762",
+          title: "2020_06_GA確認用_ワードへ",
+        },
       },
     ],
-    preview: (v) => ({
-      title: v.title || "(no headline)",
+    preview: ({ values: v }) => ({
+      title: v.title || "(no title)",
       line: `Opens SPICE article ${dash(v.article_id)}`,
-      meta: `word_id ${dash(v.word_id)} · type spice`,
+      meta: `word_id ${dash(v.word_id)}`,
     }),
     ecsForwardPath: "/api/test_notification/news_pushes",
     routeSlug: "news-push",
@@ -468,21 +481,24 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     jp: "申込み公演通知",
     code: "ORD",
     category: "order",
-    noun: "Order",
+    noun: "Status block",
     description:
-      "Status update on a ticket order — lottery result, payment, or ticketing. One row per order.",
+      "Status update on ticket orders. Each status block is one notification holding one or more order lines; blocks go out 5 minutes apart.",
     prereqs: [
       "Notification setting (order) is ON",
       "User meets the order condition",
     ],
-    recipients: true,
+    readers: "order",
+    readersNote:
+      "No recipient list for this type. The member ID on each order line decides who gets it. Accounts in the excluded list are skipped.",
     globalTime: true,
     windowStartMin: 8 * 60,
     windowEndMin: 21 * 60 + 59,
+    leadMs: TWO_HOURS,
     fields: [
       {
-        key: "sub_type",
-        label: "Order status (sub_type)",
+        key: "status",
+        label: "Order status (status)",
         span: 12,
         required: true,
         seg: [
@@ -495,82 +511,75 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
           { value: "smaticket_notyet", label: "smaticket_notyet" },
         ],
       },
-      {
-        key: "member_id",
-        label: "Member ID (member_id)",
-        span: 6,
-        required: true,
-        numeric: true,
-        check: "digits",
-        placeholder: "502001185",
-      },
-      {
-        key: "management_number",
-        label: "Management number",
-        span: 6,
-        required: true,
-        numeric: true,
-        check: "digits",
-        placeholder: "509344479",
-      },
-      {
-        key: "kogyo_code",
-        label: "Kogyo code",
-        span: 4,
-        required: true,
-        numeric: true,
-        check: "digits",
-        placeholder: "161058",
-      },
-      {
-        key: "kogyo_sub_code",
-        label: "Kogyo sub code",
-        span: 4,
-        required: true,
-        numeric: true,
-        check: "digits",
-        placeholder: "0106",
-      },
-      {
-        key: "event_code",
-        label: "Event code",
-        span: 4,
-        required: true,
-        numeric: true,
-        check: "digits",
-        placeholder: "001",
-      },
     ],
-    blank: () => ({
-      sub_type: "preorder_win",
-      member_id: "",
-      kogyo_code: "",
-      kogyo_sub_code: "",
-      event_code: "",
-      management_number: "",
-    }),
+    items: {
+      key: "order_lines",
+      noun: "Order line",
+      fields: [
+        digitsField("member_id", "Member ID (member_id)", 4, "502001185"),
+        digitsField("kogyo_code", "Kogyo code", 4, "161058"),
+        digitsField("kogyo_sub_code", "Kogyo sub code", 4, "0106"),
+        digitsField("event_code", "Event code", 4, "001"),
+        digitsField(
+          "management_number",
+          "Management number",
+          4,
+          "509344479",
+        ),
+      ],
+      blank: () => ({
+        member_id: "",
+        kogyo_code: "",
+        kogyo_sub_code: "",
+        event_code: "",
+        management_number: "",
+      }),
+    },
+    blank: () => ({ status: "preorder_win" }),
     samples: [
       {
-        sub_type: "preorder_win",
-        member_id: "502001185",
-        kogyo_code: "161058",
-        kogyo_sub_code: "0106",
-        event_code: "001",
-        management_number: "509344479",
+        values: { status: "preorder_win" },
+        items: [
+          {
+            member_id: "502001185",
+            kogyo_code: "161058",
+            kogyo_sub_code: "0106",
+            event_code: "001",
+            management_number: "509344479",
+          },
+          {
+            member_id: "602031013",
+            kogyo_code: "901522",
+            kogyo_sub_code: "0003",
+            event_code: "001",
+            management_number: "509344444",
+          },
+        ],
       },
       {
-        sub_type: "preorder_lose",
-        member_id: "502001222",
-        kogyo_code: "161058",
-        kogyo_sub_code: "0106",
-        event_code: "001",
-        management_number: "509340622",
+        values: { status: "preorder_lose" },
+        items: [
+          {
+            member_id: "502001185",
+            kogyo_code: "161058",
+            kogyo_sub_code: "0105",
+            event_code: "001",
+            management_number: "509344478",
+          },
+          {
+            member_id: "602031013",
+            kogyo_code: "901522",
+            kogyo_sub_code: "0002",
+            event_code: "001",
+            management_number: "509344436",
+          },
+        ],
       },
     ],
-    preview: (v) => ({
-      title: `${v.sub_type || ""} · member ${dash(v.member_id)}`,
-      line: `Kogyo ${dash(v.kogyo_code)}-${dash(v.kogyo_sub_code)} · event ${dash(v.event_code)}`,
-      meta: `management_number ${dash(v.management_number)}`,
+    preview: ({ values: v, items }) => ({
+      title: `${v.status || "—"} · ${plural(items.length, "order line")}`,
+      line: `Members ${listShort(items.map((i) => i.values.member_id))}`,
+      meta: `Kogyo ${listShort([...new Set(items.map((i) => `${dash(i.values.kogyo_code)}-${dash(i.values.kogyo_sub_code)}`))])}`,
     }),
     ecsForwardPath: "/api/test_notification/order_pushes",
     routeSlug: "order-push",

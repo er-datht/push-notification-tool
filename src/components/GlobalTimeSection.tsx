@@ -35,12 +35,13 @@ export function GlobalTimeSection({
       .join(" · ") + (rows.length > 3 ? " …" : "");
 
   return (
-    <Card className="mt-8">
+    <Card id="ptc-global-time" className="scroll-mt-4">
       <div className="px-5.5 pt-[18px]">
-        <span className="text-[15px] font-semibold">Global publish time</span>
+        <span className="text-[15px] font-semibold">Start time</span>
         <p className="mt-1 max-w-[64ch] text-[13.5px] leading-relaxed font-light text-ink-2">
-          One start time for the whole run. {pushType.noun}s are split
-          automatically — each row goes out 5 minutes after the one before it.
+          One start time for the whole run. Each{" "}
+          {pushType.noun.toLowerCase()} goes out 5 minutes after the one
+          before it, and every one must be within the next 2 hours.
         </p>
       </div>
       <div className="flex flex-wrap items-end gap-4 px-5.5 pt-4 pb-6">

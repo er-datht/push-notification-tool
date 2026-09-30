@@ -1,14 +1,25 @@
 import { checkError, type FieldConfig } from "@/lib/fields";
-import type { PushTypeConfig } from "@/lib/pushTypes";
+import type { ItemGroupConfig, PushTypeConfig } from "@/lib/pushTypes";
 
 export type LinkKind = "web" | "kogyo" | "word";
 export type Server = "ecs-api" | "express";
 
-/** One row of a form. `values` is keyed by each field's `FieldConfig.key` — generic across all 6 push types. */
+/** One sub-item of a notification: a show, or an order line. `values` is keyed by `FieldConfig.key`. */
+export interface FormItem {
+  id: number;
+  values: Record<string, string>;
+}
+
+/**
+ * One notification on the form. `values` holds the row's own fields; `items` its shows or order
+ * lines (empty for a type without an item list). Item ids share the row id counter, so every id on
+ * the page is unique.
+ */
 export interface FormRow {
   id: number;
   collapsed: boolean;
   values: Record<string, string>;
+  items: FormItem[];
 }
 
 export interface LinkMeta {
@@ -115,6 +126,16 @@ export function nextDelivId(id: string): string {
   return `${m[1]}${String(Number(m[2]) + 1).padStart(m[2].length, "0")}${m[3]}`;
 }
 
+/**
+ * What kind of push a set of shows makes: the one hook they share, or `mixed` when the shows use
+ * different hooks (that is how the API builds a mixed push). Null when no show has a hook.
+ */
+export function hookKind(items: FormItem[]): string | null {
+  const hooks = new Set(items.map((i) => i.values.hook).filter(Boolean));
+  if (hooks.size === 0) return null;
+  return hooks.size > 1 ? "mixed" : [...hooks][0];
+}
+
 /** Every row shares one delivery date, so we report it once here instead of on each card. */
 export function dateErrorFor(date: string): string | null {
   if (!date.trim())
@@ -134,9 +155,10 @@ function windowLabel(startMin: number, endMin: number): string {
 
 /**
  * Which input an error points at, so the card can mark it. `time` means the hour and the minute
- * together, because the rules about the window and the lead time use both. The set of possible
- * fields is type-dependent (each push type has its own `FieldConfig[]`), so this is just `string`.
- * A null field means we could not match an input, so the card shows it in its summary block.
+ * together, because the rules about the window and the lead time use both. An item's input is
+ * named by its payload path inside the edition, e.g. `shows[1].code`; the whole list by its key,
+ * e.g. `shows`. A null field means we could not match an input, so the card shows it in its
+ * summary block.
  */
 export type RowField = string;
 
@@ -144,6 +166,10 @@ export interface RowError {
   field: RowField | null;
   message: string;
 }
+
+/** The `RowField` of one item input: `shows[1].code`. */
+export const itemField = (group: ItemGroupConfig, index: number, key: string) =>
+  `${group.key}[${index}].${key}`;
 
 /** All messages for one input, in the order they were added. */
 export function errorsForField(
@@ -158,6 +184,28 @@ export function errorsForField(
 /** A field's label with any trailing `(payload_key)` stripped, for use inside a sentence. */
 function cleanLabel(f: FieldConfig): string {
   return f.label.replace(/ \(.*\)$/, "");
+}
+
+/** Required / format checks for one plain field. `link` fields are handled by the caller. */
+function fieldErrors(
+  f: FieldConfig,
+  raw: string,
+  field: RowField,
+  add: (field: RowField, message: string) => void,
+) {
+  if (!raw) {
+    if (f.required)
+      add(field, f.requiredMessage ?? `Enter the ${cleanLabel(f).toLowerCase()}.`);
+    return;
+  }
+  if (f.key === "deliv_id" && raw.length > DELIV_ID_MAX) {
+    add(field, `Delivery ID must be ${DELIV_ID_MAX} characters or fewer.`);
+    return;
+  }
+  if (f.check) {
+    const msg = checkError(f, raw);
+    if (msg) add(field, msg);
+  }
 }
 
 export function errorsFor(
@@ -187,7 +235,7 @@ export function errorsFor(
       ) {
         add(
           "time",
-          `Pick a time between ${windowLabel(pushType.windowStartMin, pushType.windowEndMin)} JST. The import job never picks up a file outside those hours.`,
+          `Pick a time between ${windowLabel(pushType.windowStartMin, pushType.windowEndMin)} JST. The server does not send outside those hours.`,
         );
       }
       // A missing or unreadable date is reported once by dateErrorFor, so we skip it here.
@@ -195,7 +243,7 @@ export function errorsFor(
       if (at !== null) {
         // Compare with the start of this minute, so picking the current time still counts as later.
         const floor = Math.floor(now.getTime() / 60_000) * 60_000;
-        if (at < floor)
+        if (at < floor && !pushType.allowPast)
           add("time", "This time has already passed in JST. Pick a later one.");
         else if (
           pushType.leadMs !== undefined &&
@@ -203,7 +251,7 @@ export function errorsFor(
         ) {
           add(
             "time",
-            "Pick a time within the next 2 hours. The import job only takes files that close to now.",
+            "Pick a time within the next 2 hours. The server only takes a time that close to now.",
           );
         }
       }
@@ -211,7 +259,7 @@ export function errorsFor(
   }
 
   for (const f of pushType.fields) {
-    if (f.fixed !== undefined || f.key === "hour" || f.key === "min") continue;
+    if (f.key === "hour" || f.key === "min") continue;
 
     if (f.link) {
       const kind = (v.kind || "web") as LinkKind;
@@ -226,32 +274,35 @@ export function errorsFor(
       continue;
     }
 
-    const raw = (v[f.key] ?? "").trim();
-    if (!raw) {
-      if (f.required)
-        add(
-          f.key,
-          f.requiredMessage ?? `Enter the ${cleanLabel(f).toLowerCase()}.`,
+    fieldErrors(f, (v[f.key] ?? "").trim(), f.key, add);
+  }
+
+  const group = pushType.items;
+  if (group) {
+    if (row.items.length === 0)
+      add(group.key, `Add at least one ${group.noun.toLowerCase()}.`);
+    row.items.forEach((item, j) => {
+      for (const f of group.fields) {
+        fieldErrors(
+          f,
+          (item.values[f.key] ?? "").trim(),
+          itemField(group, j, f.key),
+          add,
         );
-      continue;
-    }
-    if (f.key === "deliv_id" && raw.length > DELIV_ID_MAX) {
-      add(f.key, `Delivery ID must be ${DELIV_ID_MAX} characters or fewer.`);
-      continue;
-    }
-    if (f.check) {
-      const msg = checkError(f, raw);
-      if (msg) add(f.key, msg);
-    }
+      }
+    });
   }
   return e;
 }
 
+/** Normal Push: each notification is a one-hour window, and two windows must not overlap. */
+const WINDOW_MS = 60 * 60 * 1000;
+
 /**
- * Checks each row, then — for Auto App only — checks across rows: the API treats the same
- * deliv_id twice as one delivery. No other type has a documented analogue of that rule, so it
- * is not generalized (see the plan's rationale — Normal's own sample data legitimately repeats
- * target_event+word_id with a different sub_type across rows).
+ * Checks each row, then across rows:
+ * - Auto App — the API treats the same deliv_id twice as one delivery.
+ * - Normal — the API rejects two one-hour windows that overlap (NP-0208), including two in the
+ *   same request. The later notification gets the error, the same one the server would name.
  */
 export function validateRows(
   rows: FormRow[],
@@ -275,14 +326,40 @@ export function validateRows(
       }
     });
   }
+  if (pushType.id === "normal_push") {
+    const starts = rows.map((r) =>
+      r.values.hour !== "" && r.values.min !== ""
+        ? tokyoEpoch(date, Number(r.values.hour), Number(r.values.min))
+        : null,
+    );
+    starts.forEach((at, i) => {
+      if (at === null || Number.isNaN(at)) return;
+      const clash = starts.findIndex(
+        (other, j) =>
+          j < i && other !== null && Math.abs(other - at) < WINDOW_MS,
+      );
+      if (clash >= 0)
+        out[i].push({
+          field: "time",
+          message: `This hour overlaps notification ${clash + 1} (${timeLabel(rows[clash].values)}). Each one covers a full hour, so keep them at least 1 hour apart.`,
+        });
+    });
+  }
   return out;
 }
 
-/** Order's one shared Hour/Minute for the whole run, checked once instead of per row. */
+/**
+ * Order's one shared start time. Every status block goes out 5 minutes after the one before it,
+ * so the window and the two-hour rule are checked on the first and the last block, not just the
+ * start.
+ */
 export function globalTimeErrorFor(
   hour: string,
   min: string,
   pushType: PushTypeConfig,
+  date: string,
+  blocks: number,
+  now: Date = new Date(),
 ): string | null {
   const h = Number(hour);
   const m = Number(min);
@@ -290,17 +367,29 @@ export function globalTimeErrorFor(
   const minOk = min !== "" && Number.isInteger(m) && m >= 0 && m <= 59;
   if (!hourOk) return "Hour must be a whole number between 0 and 23.";
   if (!minOk) return "Minute must be a whole number between 0 and 59.";
-  const minutes = h * 60 + m;
-  if (minutes < pushType.windowStartMin || minutes > pushType.windowEndMin) {
-    return `Pick a start time between ${windowLabel(pushType.windowStartMin, pushType.windowEndMin)} JST.`;
-  }
+  const first = h * 60 + m;
+  const last = first + Math.max(blocks - 1, 0) * 5;
+  const window = windowLabel(pushType.windowStartMin, pushType.windowEndMin);
+  if (first < pushType.windowStartMin || first > pushType.windowEndMin)
+    return `Pick a start time between ${window} JST.`;
+  if (last > pushType.windowEndMin)
+    return `The last status block would go out at ${pad(Math.floor(last / 60))}:${pad(last % 60)}, after ${window}. Start earlier or use fewer blocks.`;
+  const at = tokyoEpoch(date, h, m);
+  if (at === null) return null;
+  const floor = Math.floor(now.getTime() / 60_000) * 60_000;
+  if (at < floor) return "This start time has already passed in JST. Pick a later one.";
+  if (
+    pushType.leadMs !== undefined &&
+    at + (last - first) * 60_000 - floor > pushType.leadMs
+  )
+    return "Every status block must go out within the next 2 hours. Start earlier or use fewer blocks.";
   return null;
 }
 
 /**
  * The `[hour, min]` a row publishes at: its own hour/min, or — for a `globalTime` type (Order) —
- * the shared start time plus 5 minutes per row before it, wrapping at 24h. Ported from the
- * mockup's `timeFor`. Used both for display (`timeFor` below) and for the payload itself.
+ * the shared start time plus 5 minutes per row before it. Used both for display (`timeFor` below)
+ * and for the payload itself.
  */
 export function publishHourMinFor(
   values: Record<string, string>,

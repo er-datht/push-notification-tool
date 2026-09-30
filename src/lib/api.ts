@@ -1,4 +1,5 @@
 import { bannerFor, linkLabelFor, messageFor } from "@/lib/apiMessages";
+import { normalizeCode, type FieldConfig } from "@/lib/fields";
 import type { PushTypeConfig } from "@/lib/pushTypes";
 import {
   LINKS,
@@ -18,28 +19,44 @@ function expressBase(): string | null {
   return base ? base.replace(/\/+$/, "") : null;
 }
 
+/** One show or order line in an edition. */
+export type PushItemPayload = Record<string, string | number>;
+
 /**
- * One edition's payload. Keys mostly match a `FieldConfig.key` 1:1 (e.g. `sub_type`,
- * `target_event`) — see the guessed-shape disclaimer in `src/lib/pushTypes.ts`.
+ * One edition's payload. Keys match a `FieldConfig.key` 1:1, plus `publish_hour_min` and — for a
+ * type with an item list — `shows` / `order_lines`. See `src/lib/pushTypes.ts` for which shapes are
+ * confirmed.
  */
 export type PushEditionPayload = Record<
   string,
-  string | number | [number, number]
+  string | number | [number, number] | PushItemPayload[]
 >;
 
 export interface PushPayload {
   date: string;
-  /** Empty for score_push, which targets one user per edition via `target_user` instead. */
-  login_ids: string[];
+  /** Only for types whose readers are the Recipients list (Auto App, Score). Left out otherwise. */
+  login_ids?: string[];
   /** Order push only. */
   exclude_login_ids?: string[];
   editions: PushEditionPayload[];
   distribute_now: boolean;
 }
 
+/** One edition a `201` hands back. Only Normal Push answers with these; Auto App's 201 is empty. */
+export interface CreatedEdition {
+  id: number;
+  period_start: string;
+  period_end: string;
+  status: string;
+  topics_count: number;
+}
+
 export type SubmitResult =
-  /** A `201` has no body, so there is nothing to hand back: the done screen is drawn from the payload. */
-  | { ok: true }
+  /**
+   * Auto App's `201` has no body, so the done screen is drawn from the payload. Normal Push's
+   * `201` lists the editions it created, handed back as `created`.
+   */
+  | { ok: true; created?: CreatedEdition[] }
   /**
    * `rowErrors[i]` belongs to edition `i` and `tokenError` to the API token field, the same way a
    * row error belongs to its card. `error.errors` keeps only the entries that were about neither,
@@ -76,6 +93,13 @@ interface ApiErrorBody {
   error?: Partial<Omit<ApiError, "errors">> & { errors?: unknown };
 }
 
+/** One plain field's value as sent: trimmed text, a cleaned show code, or a number when asked. */
+function sendValue(f: FieldConfig, value: string | undefined): string | number {
+  const raw = (value ?? "").trim();
+  if (f.check === "event") return normalizeCode(raw);
+  return f.sendAs === "number" ? Number(raw) : raw;
+}
+
 export function buildPayload(
   rows: FormRow[],
   loginIds: string[],
@@ -85,6 +109,7 @@ export function buildPayload(
   pushType: PushTypeConfig,
   globalTime: { hour: string; min: string },
 ): PushPayload {
+  const group = pushType.items;
   const editions = rows.map((r, i): PushEditionPayload => {
     const edition: PushEditionPayload = {
       publish_hour_min: publishHourMinFor(
@@ -96,29 +121,37 @@ export function buildPayload(
       ),
     };
     for (const f of pushType.fields) {
-      if (f.key === "hour" || f.key === "min" || f.key.startsWith("_"))
-        continue;
+      // `kind` is only the switch that picks `link_type`; the link field sends both keys.
+      if (f.key === "hour" || f.key === "min" || f.key === "kind") continue;
       if (f.link) {
         const kind = (r.values.kind || "web") as LinkKind;
         edition.link_type = LINKS[kind].code;
         edition.link_item = (r.values.linkValue ?? "").trim();
         continue;
       }
-      const raw = (r.values[f.key] ?? "").trim();
-      edition[f.key] = f.numeric || f.check === "digits" ? Number(raw) : raw;
+      edition[f.key] = sendValue(f, r.values[f.key]);
+    }
+    // Every item is sent, blank or not, so the API's `shows[j]` always means `row.items[j]`.
+    if (group) {
+      edition[group.key] = r.items.map((item) => {
+        const out: PushItemPayload = {};
+        for (const f of group.fields) out[f.key] = sendValue(f, item.values[f.key]);
+        return { ...out, ...group.fixed };
+      });
     }
     return edition;
   });
   return {
     date,
-    login_ids: pushType.recipients ? loginIds : [],
-    ...(pushType.id === "order_push" ? { exclude_login_ids: excludedIds } : {}),
+    ...(pushType.readers === "list" ? { login_ids: loginIds } : {}),
+    ...(pushType.readers === "order" ? { exclude_login_ids: excludedIds } : {}),
     editions,
     distribute_now: distributeNow,
   };
 }
 
-const EDITION_FIELD = /^editions\[(\d+)\]\.([a-z_]+)/;
+/** `editions[n].rest`, where `rest` is `deliv_id` or a nested path like `shows[0].code`. */
+const EDITION_FIELD = /^editions\[(\d+)\]\.(.+)$/;
 
 /**
  * Payload keys that don't match a `FieldConfig.key` directly — `publish_hour_min` is the
@@ -157,11 +190,12 @@ export function splitErrors(
       continue;
     }
     const label = linkLabelFor(editions[i].link_type as string | undefined);
-    // A key we don't special-case now equals the row's own field key directly (see the map's
-    // docblock), so it still reaches the right input instead of falling into the card's
-    // fallback summary block.
+    // A plain key equals the row's own field key, and a nested path (`shows[0].code`) is already
+    // the RowField of that item input, so only a special-cased top-level key is renamed. One the
+    // card has no input for still reaches it, in its fallback summary block.
+    const rest = m[2];
     rowErrors[i].push({
-      field: FIELD_BY_PAYLOAD_KEY[m[2]] ?? m[2],
+      field: FIELD_BY_PAYLOAD_KEY[rest] ?? rest,
       message: messageFor(err, label),
     });
   }
@@ -251,8 +285,20 @@ export async function submitPush(
     );
   }
 
-  // 201 is the success, and it is empty — zero bytes, nothing to parse. Branch on the status alone.
-  if (res.ok) return { ok: true };
+  // Auto App's 201 is empty — zero bytes. Normal Push's 201 lists the editions it created. Read a
+  // body only when there is one, and never fail the run over it: the server already said yes.
+  if (res.ok) {
+    const text = await res.text().catch(() => "");
+    if (!text) return { ok: true };
+    try {
+      const body = JSON.parse(text) as { editions?: unknown };
+      return Array.isArray(body.editions)
+        ? { ok: true, created: body.editions as CreatedEdition[] }
+        : { ok: true };
+    } catch {
+      return { ok: true };
+    }
+  }
 
   // 422 is validation, one entry per field. 400 is a body the API could not read at all (not
   // JSON, or a key it does not know) and uses the same envelope, so both are split the same way.
