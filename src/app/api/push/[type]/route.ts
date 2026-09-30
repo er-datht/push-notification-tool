@@ -94,8 +94,8 @@ export async function POST(
     );
   }
 
-  // 201 and 404 have no body at all, so never call res.json() here. Everything else is passed
-  // straight through: the client puts `error.errors[]` back into the form.
+  // A 404, and Auto App's 201, have no body at all, so never call res.json() here. Everything else
+  // — including Normal Push's 201, which lists the created editions — is passed straight through.
   const text = await res.text();
   if (!text) return new Response(null, { status: res.status });
 
