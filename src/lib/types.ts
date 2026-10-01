@@ -127,13 +127,55 @@ export function nextDelivId(id: string): string {
 }
 
 /**
- * What kind of push a set of shows makes: the one hook they share, or `mixed` when the shows use
- * different hooks (that is how the API builds a mixed push). Null when no show has a hook.
+ * What kind of push a notification's shows make.
+ *
+ * - `single`: every show has the same hook. With several words this is the test sheet's
+ *   `mixed(ワード)`. The text names several words, but `type` is still that one hook.
+ * - `mixed`: some word carries two different hooks, so everyone subscribed to it gets a mixed push.
+ *   This is the sheet's `mixed(受付)`.
+ * - `depends`: each word has only one hook, but the words' hooks differ. Only an account that
+ *   subscribes to words with different hooks gets a mixed push; the rest get a single hook.
  */
-export function hookKind(items: FormItem[]): string | null {
+export interface HookMix {
+  kind: "single" | "mixed" | "depends";
+  /** The shared hook when `kind` is `single`, else null. */
+  hook: string | null;
+  /** The distinct ワード ids (`performer_id`) among the shows, blanks left out. */
+  words: string[];
+}
+
+/**
+ * Classifies a notification's shows. The server sets `type` per recipient, from the topics that
+ * recipient actually gets, and a recipient gets a show's topic only by subscribing to its ワード.
+ * So hooks are compared within each word. `byWord: false` (Score, sent to a login-ID list, not
+ * to subscribers) compares hooks across all shows. Null when no show has a hook.
+ */
+export function hookMix(items: FormItem[], byWord: boolean): HookMix | null {
+  const words = showWords(items);
   const hooks = new Set(items.map((i) => i.values.hook).filter(Boolean));
   if (hooks.size === 0) return null;
-  return hooks.size > 1 ? "mixed" : [...hooks][0];
+  if (hooks.size === 1) return { kind: "single", hook: [...hooks][0], words };
+  if (!byWord) return { kind: "mixed", hook: null, words };
+
+  const hooksByWord = new Map<string, Set<string>>();
+  for (const { values } of items) {
+    if (!values.hook) continue;
+    const word = (values.performer_id ?? "").trim();
+    hooksByWord.set(word, (hooksByWord.get(word) ?? new Set()).add(values.hook));
+  }
+  const sameWordMixed = [...hooksByWord.values()].some((h) => h.size > 1);
+  return { kind: sameWordMixed ? "mixed" : "depends", hook: null, words };
+}
+
+/** The distinct ワード ids (`performer_id`) among a notification's shows, blanks left out. */
+export function showWords(items: FormItem[]): string[] {
+  return [...new Set(items.map((i) => (i.values.performer_id ?? "").trim()).filter(Boolean))];
+}
+
+/** The badge text for a `HookMix`: "mixed push", "preorder push", "mixed for some accounts". */
+export function hookMixLabel(mix: HookMix): string {
+  if (mix.kind === "single") return `${mix.hook} push`;
+  return mix.kind === "mixed" ? "mixed push" : "mixed for some accounts";
 }
 
 /** Every row shares one delivery date, so we report it once here instead of on each card. */
