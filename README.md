@@ -14,6 +14,22 @@ yarn dev
 
 Opens at http://localhost:3000.
 
+### With Docker
+
+The compose file lives in the API repo and runs this console (`web`, from `Dockerfile.dev` here)
+together with the API and MySQL. The two repos must sit side by side:
+
+```bash
+cd ../be-push-notification-tool
+docker compose up -d --build   # → http://localhost:3000
+```
+
+This repo is bind-mounted, so edits hot-reload; `node_modules` and `.next` stay in the container
+(rebuild after changing `package.json`). Compose sets `NEXT_PUBLIC_EXPRESS_API_URL` to the API's
+host port, overriding `.env.local`. `ECS_API_URL` still comes from `.env.local` — and inside the
+container `localhost` is the container itself, so a local ecs-api must be
+`http://host.docker.internal:<port>`. A staging URL works as is.
+
 ## Configuration
 
 Executing a run posts to `ecs-api` at `POST /api/test_notification/auto_app_pushes` (see

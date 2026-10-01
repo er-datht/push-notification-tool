@@ -1,0 +1,10 @@
+# Dockerfile.dev copies only package.json and yarn.lock; the source is
+# bind-mounted at run time. This keeps the build context small and keeps
+# secrets and host binaries out of the image.
+node_modules
+.next
+.env*
+!.env.example
+.git
+.claude
+tsconfig.tsbuildinfo
