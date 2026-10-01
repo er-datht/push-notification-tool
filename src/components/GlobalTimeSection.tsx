@@ -2,7 +2,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FieldError, Req } from "@/components/FieldText";
-import { timeFor, type FormRow } from "@/lib/types";
+import { ORDER_BLOCK_STEP_MIN, timeFor, type FormRow } from "@/lib/types";
 import type { PushTypeConfig } from "@/lib/pushTypes";
 
 interface Props {
@@ -15,7 +15,7 @@ interface Props {
   error: string | null;
 }
 
-/** Order push only: one shared start time for the whole run — rows are auto-staggered 5 minutes apart. */
+/** Order push only: one shared start time for the whole run — rows are auto-staggered `ORDER_BLOCK_STEP_MIN` apart. */
 export function GlobalTimeSection({
   pushType,
   rows,
@@ -40,8 +40,9 @@ export function GlobalTimeSection({
         <span className="text-[15px] font-semibold">Start time</span>
         <p className="mt-1 max-w-[64ch] text-[13.5px] leading-relaxed font-light text-ink-2">
           One start time for the whole run. Each{" "}
-          {pushType.noun.toLowerCase()} goes out 5 minutes after the one
-          before it, and every one must be within the next 2 hours.
+          {pushType.noun.toLowerCase()} is timed {ORDER_BLOCK_STEP_MIN} minutes
+          after the one before it, and every time must be within the next 2
+          hours. The times are only labels: Order is published by hand.
         </p>
       </div>
       <div className="flex flex-wrap items-end gap-4 px-5.5 pt-4 pb-6">

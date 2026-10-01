@@ -1,5 +1,5 @@
 import type { CreatedEdition, PushPayload } from "@/lib/api";
-import type { PushTypeConfig } from "@/lib/pushTypes";
+import type { PreviewContext, PushTypeConfig } from "@/lib/pushTypes";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -36,9 +36,10 @@ const clock = (iso: string) => /T(\d{2}:\d{2})/.exec(iso)?.[1] ?? iso;
 function detailsFor(
   pushType: PushTypeConfig,
   row: FormRow | undefined,
+  ctx: PreviewContext,
 ): { title: string; line: string } {
   if (!row) return { title: "—", line: "—" };
-  const p = pushType.preview(row);
+  const p = pushType.preview(row, ctx);
   if (pushType.id === "auto_app_push" && row.values.kind === "kogyo") {
     return {
       title: p.title,
@@ -69,7 +70,10 @@ function whatHappened(
         : " The server publishes at the next 10-minute tick inside each window."
     }`;
   }
-  return "The API accepted the run. This push type's endpoint is not confirmed with the backend team yet, so ask them what happens next.";
+  const manual = pushType.manualPublish
+    ? `Nothing sends this push type by itself: at the delivery time someone has to run ${pushType.manualPublish} in rails c on STAG, or no push arrives. `
+    : "";
+  return `The API accepted the run. ${manual}This push type's endpoint is not confirmed with the backend team yet, so ask them what happens next.`;
 }
 
 /** Why the numbers above are not a delivery count. */
@@ -93,6 +97,7 @@ export function DoneView({
     payload;
   const runLabel = `STAG-${pushType.code}-${4820 + editions.length}`;
   const noun = pushType.noun.toLowerCase();
+  const ctx: PreviewContext = { excludedIds: exclude_login_ids };
 
   return (
     <div className="w-full overflow-y-auto px-5 py-9 sm:px-10 sm:py-14">
@@ -122,7 +127,7 @@ export function DoneView({
               const row = rows[i];
               const made = created?.[i];
               const [hour, min] = edition.publish_hour_min as [number, number];
-              const d = detailsFor(pushType, row);
+              const d = detailsFor(pushType, row, ctx);
               return (
                 <tr key={i}>
                   <td
@@ -144,7 +149,7 @@ export function DoneView({
                     {made
                       ? `Edition #${made.id} · ${made.topics_count} topic${made.topics_count === 1 ? "" : "s"}`
                       : row
-                        ? pushType.preview(row).meta
+                        ? pushType.preview(row, ctx).meta
                         : "—"}
                   </td>
                 </tr>

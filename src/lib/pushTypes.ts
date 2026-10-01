@@ -36,6 +36,27 @@ export interface PreviewCard {
   meta: string;
 }
 
+/** Run-level values a preview may need, beyond the row itself. */
+export interface PreviewContext {
+  /** Order's excluded list — an order line whose member is on it is dropped by the server. */
+  excludedIds?: string[];
+}
+
+/**
+ * Order's status → the `01`–`07` number the server writes as the CSV filename prefix
+ * (`TYPE_BY_FILEPREFIX`; the guideline's `data_01`–`data_07`). It comes from the status, never
+ * from the block's position, and the form never sends it.
+ */
+export const ORDER_STATUS_NUMBER: Record<string, string> = {
+  preorder_win: "01",
+  preorder_lose: "02",
+  money: "03",
+  ticketing_notyet: "04",
+  ticketing_now: "05",
+  smaticket_now: "06",
+  smaticket_notyet: "07",
+};
+
 /**
  * How a push type finds its readers:
  * - `list`  — the Recipients list the form sends as `login_ids` (Auto App, Score).
@@ -99,7 +120,13 @@ export interface PushTypeConfig {
   /** Seed rows shown the first time this type is opened. */
   samples: SampleRow[];
   /** The review-rail / done-screen card body for one row. */
-  preview: (row: FormRow) => PreviewCard;
+  preview: (row: FormRow, ctx?: PreviewContext) => PreviewCard;
+  /**
+   * The `rails c` command a person must run on STAG at the delivery time, for a type whose
+   * notifications nothing sends by itself (In store, Score, News, Order). Undefined = the type's
+   * own cron sends it.
+   */
+  manualPublish?: string;
   /** Path our own route handler forwards to on ecs-api. */
   ecsForwardPath: string;
   /** Path segment for our proxy route: `/api/push/{routeSlug}`. */
@@ -351,6 +378,8 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
       },
     ],
     preview: (row) => ({ ...showsPreview(row), title: `in_store · ${plural(row.items.length, "show")}` }),
+    // Its queuer runs only at 08:00 on Mondays and Thursdays, so in practice a person publishes it.
+    manualPublish: "edition.notifications.each(&:publish)",
     ecsForwardPath: "/api/test_notification/last_minute_pushes",
     routeSlug: "last-minute-push",
     expressPath: "/api/notifications/last-minute-pushes",
@@ -398,6 +427,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
       },
     ],
     preview: showsPreview,
+    manualPublish: "edition.publish!",
     ecsForwardPath: "/api/test_notification/score_pushes",
     routeSlug: "score-push",
     expressPath: "/api/notifications/score-pushes",
@@ -469,6 +499,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
       line: `Opens SPICE article ${dash(v.article_id)}`,
       meta: `word_id ${dash(v.word_id)}`,
     }),
+    manualPublish: "Epica::ArticleEdition.find(id).publish!",
     ecsForwardPath: "/api/test_notification/news_pushes",
     routeSlug: "news-push",
     expressPath: "/api/notifications/news-pushes",
@@ -483,7 +514,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     category: "order",
     noun: "Status block",
     description:
-      "Status update on ticket orders. Each status block is one notification holding one or more order lines; blocks go out 5 minutes apart.",
+      "Status update on ticket orders. Each status block is one notification holding one or more order lines; block times are 10 minutes apart.",
     prereqs: [
       "Notification setting (order) is ON",
       "User meets the order condition",
@@ -576,11 +607,18 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
         ],
       },
     ],
-    preview: ({ values: v, items }) => ({
-      title: `${v.status || "—"} · ${plural(items.length, "order line")}`,
-      line: `Members ${listShort(items.map((i) => i.values.member_id))}`,
-      meta: `Kogyo ${listShort([...new Set(items.map((i) => `${dash(i.values.kogyo_code)}-${dash(i.values.kogyo_sub_code)}`))])}`,
-    }),
+    preview: ({ values: v, items }, ctx) => {
+      const number = ORDER_STATUS_NUMBER[v.status];
+      const excluded = new Set(ctx?.excludedIds ?? []);
+      // The server skips these lines while writing the CSV — say so, or the tester counts a push as lost.
+      const dropped = items.filter((i) => excluded.has(i.values.member_id)).length;
+      return {
+        title: `${v.status || "—"}${number ? ` (${number})` : ""} · ${plural(items.length, "order line")}`,
+        line: `Members ${listShort(items.map((i) => i.values.member_id))}${dropped ? ` · ${dropped} dropped (excluded)` : ""}`,
+        meta: `Kogyo ${listShort([...new Set(items.map((i) => `${dash(i.values.kogyo_code)}-${dash(i.values.kogyo_sub_code)}`))])}`,
+      };
+    },
+    manualPublish: "Epica::OrderedShowsList.find(id).publish!",
     ecsForwardPath: "/api/test_notification/order_pushes",
     routeSlug: "order-push",
     expressPath: "/api/notifications/order-pushes",

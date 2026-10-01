@@ -1,8 +1,8 @@
 /** Keeps the last run settings between sends. Best effort: if the browser blocks storage,
  *  we just fall back to the defaults. */
 
-/** v2: the default lists became the guideline's. A new key lets those defaults reach everyone once. */
-const KEY = "ptc.settings.v2";
+/** v3: the default login IDs became ecs-api's 7. A new key lets changed defaults reach everyone once. */
+const KEY = "ptc.settings.v3";
 
 export interface SavedSettings {
   /** Empty when nothing usable was saved — the page then keeps its default list. */

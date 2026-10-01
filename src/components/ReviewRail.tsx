@@ -18,6 +18,8 @@ interface Props {
   pushType: PushTypeConfig;
   /** Who the run reaches, e.g. "10 recipients" or "subscribers of the word" — see PushConsole. */
   audience: string;
+  /** Order's excluded list, so the preview can mark order lines the server will drop. */
+  excludedIds: string[];
   date: string;
   distributeNow: boolean;
   /** Order push's shared start time, used to compute each row's display time. */
@@ -34,6 +36,16 @@ interface Props {
   onExecute: () => void;
 }
 
+/** When the push actually goes out, in a few words — it differs by push type. */
+function deliveryLine(pushType: PushTypeConfig, distributeNow: boolean): string {
+  if (pushType.manualPublish) return "sent only when someone runs publish! in rails c";
+  if (pushType.id === "auto_app_push")
+    return "the S3 upload is off on the server, so nothing is sent";
+  return distributeNow
+    ? "distribute_now ON, the job runs right away"
+    : "picked up within the next 10 minutes";
+}
+
 const SERVERS: { value: Server; sub: string; disabled?: boolean }[] = [
   { value: "ecs-api", sub: "The old Rails batch path" },
   { value: "express", sub: "The new Node/Express service" },
@@ -46,6 +58,7 @@ export function ReviewRail({
   rows,
   pushType,
   audience,
+  excludedIds,
   date,
   distributeNow,
   globalHour,
@@ -206,11 +219,8 @@ export function ReviewRail({
               : `Some ${pushType.noun.toLowerCase()}s need fixing. The details are on the cards on the left.`
             : "A live preview of what each recipient will see."}
           <span className="mt-2 block text-xs text-ink-4 tabular-nums">
-            {date || "—"} JST ·{" "}
-            {distributeNow
-              ? "distribute_now ON, the job runs right away"
-              : "picked up within the next 10 minutes"}{" "}
-            · {audience}
+            {date || "—"} JST · {deliveryLine(pushType, distributeNow)} ·{" "}
+            {audience}
           </span>
         </p>
 
@@ -228,7 +238,7 @@ export function ReviewRail({
           )}
         >
           {rows.map((r, i) => {
-            const p = pushType.preview(r);
+            const p = pushType.preview(r, { excludedIds });
             return (
               <Card
                 key={r.id}
