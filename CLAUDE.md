@@ -17,6 +17,8 @@ Use yarn (1.22.22). `package-lock.json` and `pnpm-lock.yaml` are ignored by git 
 
 There are no tests and no test command in this project yet.
 
+**Docker (dev only).** `Dockerfile.dev` here is built and run as the `web` service by `../be-push-notification-tool/docker-compose.yml` (`docker compose up -d` there starts MySQL, the API and this console). The image holds only `node_modules`; the repo is bind-mounted for hot reload, with `node_modules` and `.next` kept in container volumes. Compose sets `NEXT_PUBLIC_EXPRESS_API_URL=http://localhost:${PORT}` — the host-published API port, because the browser calls express directly, never `http://api:…`. `ECS_API_URL` still comes from `.env.local`; inside the container `localhost` is the container, so a local ecs-api is `http://host.docker.internal:<port>`. No production image yet.
+
 ## What this app is
 
 One page where a person fills in push notifications and sends them to the **STAG environment only**. It came from the Claude Design project `push-tool-console`.
