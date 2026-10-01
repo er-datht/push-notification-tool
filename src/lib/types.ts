@@ -349,8 +349,14 @@ export function validateRows(
 }
 
 /**
- * Order's one shared start time. Every status block goes out 5 minutes after the one before it,
- * so the window and the two-hour rule are checked on the first and the last block, not just the
+ * Minutes between two Order status blocks (`doc/misc/プッシュ通知テスト配信.md:280-289` in ecs-api).
+ * Only a label in the filename and `will_publish_at` — Order is published by hand.
+ */
+export const ORDER_BLOCK_STEP_MIN = 10;
+
+/**
+ * Order's one shared start time. Every status block is `ORDER_BLOCK_STEP_MIN` after the one before
+ * it, so the window and the two-hour rule are checked on the first and the last block, not just the
  * start.
  */
 export function globalTimeErrorFor(
@@ -368,7 +374,7 @@ export function globalTimeErrorFor(
   if (!hourOk) return "Hour must be a whole number between 0 and 23.";
   if (!minOk) return "Minute must be a whole number between 0 and 59.";
   const first = h * 60 + m;
-  const last = first + Math.max(blocks - 1, 0) * 5;
+  const last = first + Math.max(blocks - 1, 0) * ORDER_BLOCK_STEP_MIN;
   const window = windowLabel(pushType.windowStartMin, pushType.windowEndMin);
   if (first < pushType.windowStartMin || first > pushType.windowEndMin)
     return `Pick a start time between ${window} JST.`;
@@ -382,14 +388,14 @@ export function globalTimeErrorFor(
     pushType.leadMs !== undefined &&
     at + (last - first) * 60_000 - floor > pushType.leadMs
   )
-    return "Every status block must go out within the next 2 hours. Start earlier or use fewer blocks.";
+    return "Every status block's time must be within the next 2 hours. Start earlier or use fewer blocks.";
   return null;
 }
 
 /**
  * The `[hour, min]` a row publishes at: its own hour/min, or — for a `globalTime` type (Order) —
- * the shared start time plus 5 minutes per row before it. Used both for display (`timeFor` below)
- * and for the payload itself.
+ * the shared start time plus `ORDER_BLOCK_STEP_MIN` per row before it. Used both for display
+ * (`timeFor` below) and for the payload itself.
  */
 export function publishHourMinFor(
   values: Record<string, string>,
@@ -400,7 +406,9 @@ export function publishHourMinFor(
 ): [number, number] {
   if (pushType.globalTime) {
     const base =
-      (Number(globalHour) || 0) * 60 + (Number(globalMin) || 0) + index * 5;
+      (Number(globalHour) || 0) * 60 +
+      (Number(globalMin) || 0) +
+      index * ORDER_BLOCK_STEP_MIN;
     const total = ((base % (24 * 60)) + 24 * 60) % (24 * 60);
     return [Math.floor(total / 60), total % 60];
   }

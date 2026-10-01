@@ -41,20 +41,20 @@ import {
   type Server,
 } from "@/lib/types";
 
-/** The guideline's `PushTest::Common.login_ids` — the test accounts Auto App and Score send to. */
+/**
+ * ecs-api's `PushTest::Common.login_ids` (`lib/push_test/common.rb:8`) — the test accounts Auto App
+ * and Score send to. The guideline deck lists 10 different ones; the repo's 7 win.
+ */
 const DEFAULT_LOGIN_IDS = [
   "502001185",
   "502000539",
+  "502001222",
+  "502001239",
   "602028303",
   "602028310",
   "602031006",
-  "602202796",
-  "602202802",
-  "602031013",
-  "602028327",
-  "602031631",
 ];
-/** The guideline's `PushTest::Common.exclude_login_ids` — skipped by Order Push. */
+/** `PushTest::Common.exclude_login_ids` (`lib/push_test/common.rb:9`) — skipped by Order Push. */
 const DEFAULT_EXCLUDED_IDS = ["602031013", "602028327", "502001161", "602003515"];
 const DEFAULT_GLOBAL_HOUR = "15";
 const DEFAULT_GLOBAL_MIN = "30";
@@ -437,6 +437,7 @@ export function PushConsole() {
       rows={rows}
       pushType={pushType}
       audience={audience}
+      excludedIds={excludedIds}
       date={date}
       distributeNow={distributeNow}
       globalHour={globalHour}
