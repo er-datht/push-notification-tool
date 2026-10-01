@@ -1,4 +1,4 @@
-import { XIcon } from "lucide-react";
+import { InfoIcon, XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FieldControl } from "@/components/FieldControl";
@@ -7,9 +7,11 @@ import { isExpandableCode } from "@/lib/fields";
 import type { ItemGroupConfig, PushTypeConfig } from "@/lib/pushTypes";
 import {
   errorsForField,
-  hookKind,
+  hookMix,
+  hookMixLabel,
   itemField,
   rowDomId,
+  showWords,
   type FormRow,
   type RowError,
 } from "@/lib/types";
@@ -39,7 +41,11 @@ export function ItemList({
 }: Props) {
   const noun = group.noun.toLowerCase();
   const hasHook = group.fields.some((f) => f.key === "hook");
-  const kind = hasHook ? hookKind(row.items) : null;
+  // A word-reader type reaches a show only through a subscription to its word, so whether the
+  // push comes out mixed, and what the test account must subscribe to, is judged per word.
+  const byWord = pushType.readers === "word";
+  const mix = hasHook ? hookMix(row.items, byWord) : null;
+  const words = byWord && group.key === "shows" ? showWords(row.items) : [];
   const listErrors = errorsForField(errors, group.key);
   const fixed = Object.entries(group.fixed ?? {});
 
@@ -48,14 +54,14 @@ export function ItemList({
       <div className="mb-2.5 flex flex-wrap items-center gap-2">
         <span className="text-[14px] font-semibold">{group.noun}s</span>
         <Badge variant="secondary">{row.items.length}</Badge>
-        {kind && (
+        {mix && (
           <Badge
             variant="secondary"
             className={
-              kind === "mixed" ? "bg-blue-chip text-blue-dark" : undefined
+              mix.kind === "single" ? undefined : "bg-blue-chip text-blue-dark"
             }
           >
-            {kind} push
+            {hookMixLabel(mix)}
           </Badge>
         )}
         {fixed.map(([k, val]) => (
@@ -66,7 +72,28 @@ export function ItemList({
       </div>
       {hasHook && (
         <p className="mb-3 text-[12.5px] font-light text-ink-4">
-          Shows with different types in one notification make a mixed push.
+          {byWord
+            ? "Two shows of the same word with different types make a mixed push."
+            : "Shows with different types in one notification make a mixed push."}
+        </p>
+      )}
+      {mix?.kind === "depends" && (
+        <p className="mb-3 text-[12.5px] font-light text-ink-4">
+          Each word here has only one type. An account that subscribes to just
+          one of these words gets a single-type push, not a mixed one. For a
+          mixed push for everyone, give two shows of the same word different
+          types.
+        </p>
+      )}
+      {words.length > 1 && (
+        <p className="mb-3 flex gap-2 rounded-md bg-blue-tint px-3 py-2 text-[12.5px] text-ink-2">
+          <InfoIcon className="mt-px size-3.5 shrink-0 text-blue-dark" />
+          <span>
+            This notification names {words.length} words ({words.join(", ")}).
+            The test account must subscribe to every one of them. If it
+            subscribes to only some, it gets a notification with only those
+            words, and nothing reports a problem.
+          </span>
         </p>
       )}
       <FieldError messages={listErrors} />

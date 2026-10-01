@@ -20,7 +20,7 @@ import {
   wordField,
   type FieldConfig,
 } from "@/lib/fields";
-import { hookKind, LINKS, type FormRow, type LinkKind } from "@/lib/types";
+import { hookMix, LINKS, type FormRow, type LinkKind } from "@/lib/types";
 
 export type PushTypeId =
   | "auto_app_push"
@@ -191,14 +191,27 @@ const show = (
 ): Record<string, string> =>
   hook ? { code, performer_id, hook } : { code, performer_id };
 
-function showsPreview(row: FormRow): PreviewCard {
-  const kind = hookKind(row.items) ?? "—";
-  return {
-    title: `${kind} · ${plural(row.items.length, "show")}`,
-    line: listShort(row.items.map((i) => i.values.code)),
-    meta: `word ${listShort([...new Set(row.items.map((i) => i.values.performer_id))])}`,
+/**
+ * The preview card for a list of shows. `byWord` is true for a type whose readers are a word's
+ * subscribers, so the push kind is judged per word (see `hookMix`).
+ */
+const showsPreview =
+  (byWord: boolean) =>
+  (row: FormRow): PreviewCard => {
+    const mix = hookMix(row.items, byWord);
+    const kind = !mix
+      ? "—"
+      : mix.kind === "single"
+        ? mix.hook
+        : mix.kind === "mixed"
+          ? "mixed"
+          : "mixed for some";
+    return {
+      title: `${kind} · ${plural(row.items.length, "show")}`,
+      line: listShort(row.items.map((i) => i.values.code)),
+      meta: `word ${listShort([...new Set(row.items.map((i) => i.values.performer_id))])}`,
+    };
   };
-}
 
 export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
   auto_app_push: {
@@ -292,7 +305,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     category: "check",
     noun: "Notification",
     description:
-      "Sale-start alert for subscribers of a word. One notification holds one or more shows; two shows with different types make a mixed push.",
+      "Sale-start alert for subscribers of a word. One notification holds one or more shows; two shows of the same word with different types make a mixed push.",
     prereqs: [
       "Notification setting (check) is ON",
       "User subscribes to the word",
@@ -317,6 +330,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     },
     blank: () => ({ hour: "17", min: "00" }),
     samples: [
+      // mixed(受付): one word, two hooks — a mixed push for everyone subscribed to 2762.
       {
         values: { hour: "17", min: "00" },
         items: [
@@ -328,8 +342,17 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
         values: { hour: "18", min: "00" },
         items: [show("9011910001-P0030007P021005", "75223", "preorder")],
       },
+      // mixed(ワード): two words, one hook — a preorder push naming both words, never `mixed`.
+      // Only a test account subscribed to both words sees both.
+      {
+        values: { hour: "19", min: "00" },
+        items: [
+          show("9014500001-P0030056", "2762", "preorder"),
+          show("9011910001-P0030007P021005", "75223", "preorder"),
+        ],
+      },
     ],
-    preview: showsPreview,
+    preview: showsPreview(true),
     ecsForwardPath: "/api/test_notification/normal_pushes",
     routeSlug: "normal-push",
     expressPath: "/api/notifications/normal-pushes",
@@ -377,7 +400,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
         ],
       },
     ],
-    preview: (row) => ({ ...showsPreview(row), title: `in_store · ${plural(row.items.length, "show")}` }),
+    preview: (row) => ({ ...showsPreview(true)(row), title: `in_store · ${plural(row.items.length, "show")}` }),
     // Its queuer runs only at 08:00 on Mondays and Thursdays, so in practice a person publishes it.
     manualPublish: "edition.notifications.each(&:publish)",
     ecsForwardPath: "/api/test_notification/last_minute_pushes",
@@ -426,7 +449,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
         items: [show("1610580031-P0030118P021001", "75223", "preorder")],
       },
     ],
-    preview: showsPreview,
+    preview: showsPreview(false),
     manualPublish: "edition.publish!",
     ecsForwardPath: "/api/test_notification/score_pushes",
     routeSlug: "score-push",
