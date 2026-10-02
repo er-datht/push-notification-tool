@@ -36,8 +36,6 @@ interface Props {
   computedTime?: string;
 }
 
-const hhmm = (min: number) => `${pad(Math.floor(min / 60))}:${pad(min % 60)}`;
-
 /** Every RowField an input on this card shows errors for. Anything else goes to the summary block. */
 function ownedFields(row: FormRow, pushType: PushTypeConfig): Set<RowField> {
   const owned = new Set<RowField>();
@@ -179,15 +177,7 @@ export function NotificationRowCard({
                 </div>
                 <FieldError id={timeErrId} messages={timeErrors} />
                 {!timeErrors.length && (
-                  <FieldHelp>
-                    {hhmm(pushType.windowStartMin)} to{" "}
-                    {hhmm(pushType.windowEndMin)} JST
-                    {pushType.leadMs
-                      ? ", and no more than 2 hours from now."
-                      : pushType.allowPast
-                        ? ". Starts a one-hour window; a time that has already started is fine."
-                        : "."}
-                  </FieldHelp>
+                  <FieldHelp>{pushType.timeHelp}</FieldHelp>
                 )}
               </div>
             )}

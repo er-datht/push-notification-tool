@@ -3,8 +3,8 @@
  * guideline's Rails commands (`PushTest::Common.create_*_edition`) — see
  * `docs/PUSH-TYPES-FIELD-REFERENCE.md`.
  *
- * Confirmed contracts: Auto App Push (`docs/API-DOC-auto-app-push.md`) and Normal Push
- * (`docs/API-DOC-normal-push.md`). The other four have no endpoint on either server yet, so their
+ * Confirmed contracts: Auto App Push (`../fe-docs/API-DOC-auto-app-push.md`) and Normal Push
+ * (`../fe-docs/API-DOC-normal-push.md`). The other four have no endpoint on either server yet, so their
  * paths and request keys are guesses (`backendConfirmed: false`):
  *   - In store and Score reuse Normal's show keys (`code` / `performer_id` / `hook`), because the
  *     guideline builds all three from the same `[code, word, type]` show triple.
@@ -13,7 +13,7 @@
 
 import {
   codeField,
-  digitsField,
+  requiredTextField,
   HOUR,
   MIN,
   performerField,
@@ -104,13 +104,16 @@ export interface PushTypeConfig {
   readersNote?: string;
   /** True only for Order — one shared start time for the whole run, no per-row time fields. */
   globalTime: boolean;
-  /** The JST window a delivery time must fall inside, in minutes from midnight. */
-  windowStartMin: number;
-  windowEndMin: number;
-  /** How far ahead of now a time may be (the guideline's two-hour resend rule). */
+  /**
+   * The JST window a delivery time must fall inside, in minutes from midnight — only where
+   * ecs-api enforces one (Auto App `AP-0209`, Normal `NP-0207`). Unset: any time is accepted.
+   */
+  windowStartMin?: number;
+  windowEndMin?: number;
+  /** How far ahead of now a time may be — only Auto App (`AP-0208`). A past time is always fine. */
   leadMs?: number;
-  /** A time in the past is fine (Normal Push: the one-hour window may already have started). */
-  allowPast?: boolean;
+  /** The grey line under the hour/minute inputs. */
+  timeHelp: string;
   /** The row's own fields, in render order. `HOUR`/`MIN` are rendered by the time widget. */
   fields: FieldConfig[];
   /** The list of sub-items inside each notification, when the type has one. */
@@ -138,6 +141,10 @@ export interface PushTypeConfig {
 }
 
 const TWO_HOURS = 2 * 60 * 60 * 1000;
+
+/** For a type ecs-api sets no time limits on (In store, Score, News). */
+const ANY_TIME_HELP =
+  "Any time, JST. The server sets no time limits for this type.";
 
 const WORD_NOTE =
   "No recipient list for this type. The server sends to every account subscribed to the show's word ID — make sure your test accounts subscribe to it.";
@@ -229,6 +236,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     windowStartMin: 8 * 60,
     windowEndMin: 22 * 60,
     leadMs: TWO_HOURS,
+    timeHelp: "08:00 to 22:00 JST, and no more than 2 hours from now.",
     fields: [
       HOUR,
       MIN,
@@ -316,7 +324,8 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     // The time starts a one-hour window, and the server only publishes until 22:00.
     windowStartMin: 8 * 60,
     windowEndMin: 21 * 60,
-    allowPast: true,
+    timeHelp:
+      "08:00 to 21:00 JST. Starts a one-hour window; a time that has already started is fine.",
     fields: [HOUR, MIN],
     items: {
       key: "shows",
@@ -375,14 +384,15 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     readers: "word",
     readersNote: WORD_NOTE,
     globalTime: false,
-    windowStartMin: 8 * 60,
-    windowEndMin: 22 * 60,
-    leadMs: TWO_HOURS,
+    timeHelp: ANY_TIME_HELP,
     fields: [HOUR, MIN],
     items: {
       key: "shows",
       noun: "Show",
-      fields: [codeField(6), performerField(6, ["75223", "23542"])],
+      fields: [
+        codeField(6, { check: false }),
+        performerField(6, ["75223", "23542"]),
+      ],
       blank: () => ({ code: "", performer_id: "75223" }),
       fixed: { hook: "in_store" },
     },
@@ -421,15 +431,13 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     prereqs: ["push_score_weekly is ON", "Push is enabled for the user in DB"],
     readers: "list",
     globalTime: false,
-    windowStartMin: 8 * 60,
-    windowEndMin: 21 * 60 + 59,
-    leadMs: TWO_HOURS,
+    timeHelp: ANY_TIME_HELP,
     fields: [HOUR, MIN],
     items: {
       key: "shows",
       noun: "Show",
       fields: [
-        codeField(6),
+        codeField(6, { check: false }),
         performerField(6, ["2762", "1533", "75223"]),
         HOOK_FIELD,
       ],
@@ -450,7 +458,8 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
       },
     ],
     preview: showsPreview(false),
-    manualPublish: "edition.publish!",
+    // The test helper leaves the edition at :edited, so the 10-minute queuer never picks it up.
+    manualPublish: "edition.publish!(at: Time.zone.now)",
     ecsForwardPath: "/api/test_notification/score_pushes",
     routeSlug: "score-push",
     expressPath: "/api/notifications/score-pushes",
@@ -474,9 +483,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     readersNote:
       "No recipient list for this type. The server sends to every account subscribed to the word ID — make sure your test accounts subscribe to it.",
     globalTime: false,
-    windowStartMin: 8 * 60,
-    windowEndMin: 22 * 60,
-    leadMs: TWO_HOURS,
+    timeHelp: ANY_TIME_HELP,
     fields: [
       HOUR,
       MIN,
@@ -546,9 +553,8 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     readersNote:
       "No recipient list for this type. The member ID on each order line decides who gets it. Accounts in the excluded list are skipped.",
     globalTime: true,
-    windowStartMin: 8 * 60,
-    windowEndMin: 21 * 60 + 59,
-    leadMs: TWO_HOURS,
+    // Order has no per-card time widget; its shared start time has its own copy (GlobalTimeSection).
+    timeHelp: "",
     fields: [
       {
         key: "status",
@@ -570,11 +576,11 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
       key: "order_lines",
       noun: "Order line",
       fields: [
-        digitsField("member_id", "Member ID (member_id)", 4, "502001185"),
-        digitsField("kogyo_code", "Kogyo code", 4, "161058"),
-        digitsField("kogyo_sub_code", "Kogyo sub code", 4, "0106"),
-        digitsField("event_code", "Event code", 4, "001"),
-        digitsField(
+        requiredTextField("member_id", "Member ID (member_id)", 4, "502001185"),
+        requiredTextField("kogyo_code", "Kogyo code", 4, "161058"),
+        requiredTextField("kogyo_sub_code", "Kogyo sub code", 4, "0106"),
+        requiredTextField("event_code", "Event code", 4, "001"),
+        requiredTextField(
           "management_number",
           "Management number",
           4,

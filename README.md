@@ -33,7 +33,7 @@ container `localhost` is the container itself, so a local ecs-api must be
 ## Configuration
 
 Executing a run posts to `ecs-api` at `POST /api/test_notification/auto_app_pushes` (see
-`docs/API-DOC-auto-app-push.md`). One server-only env var is required:
+`../fe-docs/API-DOC-auto-app-push.md`). One server-only env var is required:
 
 | Variable | Notes |
 |---|---|

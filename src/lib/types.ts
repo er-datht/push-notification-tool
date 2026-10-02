@@ -269,33 +269,31 @@ export function errorsFor(
     if (!hourOk) add("hour", "Hour must be a whole number between 0 and 23.");
     if (!minOk) add("min", "Minute must be a whole number between 0 and 59.");
 
+    // Only the rules ecs-api enforces: a JST window (Auto App, Normal) and a two-hour cap (Auto App).
+    // A time that has already passed is fine for every type — ecs-api sends it at once.
+    const { windowStartMin: start, windowEndMin: end } = pushType;
     if (hourOk && minOk) {
       const minutes = h * 60 + m;
       if (
-        minutes < pushType.windowStartMin ||
-        minutes > pushType.windowEndMin
+        start !== undefined &&
+        end !== undefined &&
+        (minutes < start || minutes > end)
       ) {
         add(
           "time",
-          `Pick a time between ${windowLabel(pushType.windowStartMin, pushType.windowEndMin)} JST. The server does not send outside those hours.`,
+          `Pick a time between ${windowLabel(start, end)} JST. The server does not send outside those hours.`,
         );
       }
       // A missing or unreadable date is reported once by dateErrorFor, so we skip it here.
       const at = tokyoEpoch(date, h, m);
-      if (at !== null) {
-        // Compare with the start of this minute, so picking the current time still counts as later.
+      if (at !== null && pushType.leadMs !== undefined) {
+        // Compare with the start of this minute, so picking the current time still counts as now.
         const floor = Math.floor(now.getTime() / 60_000) * 60_000;
-        if (at < floor && !pushType.allowPast)
-          add("time", "This time has already passed in JST. Pick a later one.");
-        else if (
-          pushType.leadMs !== undefined &&
-          at - floor > pushType.leadMs
-        ) {
+        if (at - floor > pushType.leadMs)
           add(
             "time",
             "Pick a time within the next 2 hours. The server only takes a time that close to now.",
           );
-        }
       }
     }
   }
@@ -341,10 +339,9 @@ export function errorsFor(
 const WINDOW_MS = 60 * 60 * 1000;
 
 /**
- * Checks each row, then across rows:
- * - Auto App — the API treats the same deliv_id twice as one delivery.
- * - Normal — the API rejects two one-hour windows that overlap (NP-0208), including two in the
- *   same request. The later notification gets the error, the same one the server would name.
+ * Checks each row, then the one cross-row rule ecs-api has: Normal rejects two one-hour windows
+ * that overlap (NP-0208), including two in the same request. The later notification gets the
+ * error, the same one the server would name.
  */
 export function validateRows(
   rows: FormRow[],
@@ -353,21 +350,6 @@ export function validateRows(
   now: Date = new Date(),
 ): RowError[][] {
   const out = rows.map((r) => errorsFor(r, pushType, date, now));
-  if (pushType.id === "auto_app_push") {
-    const firstSeen = new Map<string, number>();
-    rows.forEach((r, i) => {
-      const id = (r.values.deliv_id ?? "").trim();
-      if (!id) return;
-      const first = firstSeen.get(id);
-      if (first === undefined) firstSeen.set(id, i);
-      else {
-        out[i].push({
-          field: "deliv_id",
-          message: `Delivery ID "${id}" is already used by notification ${first + 1}. The same ID twice counts as one delivery, so give this one its own ID.`,
-        });
-      }
-    });
-  }
   if (pushType.id === "normal_push") {
     const starts = rows.map((r) =>
       r.values.hour !== "" && r.values.min !== ""
@@ -397,40 +379,16 @@ export function validateRows(
 export const ORDER_BLOCK_STEP_MIN = 10;
 
 /**
- * Order's one shared start time. Every status block is `ORDER_BLOCK_STEP_MIN` after the one before
- * it, so the window and the two-hour rule are checked on the first and the last block, not just the
- * start.
+ * Order's one shared start time. ecs-api sets no time rule for Order (its `8..21` gate reads the
+ * moment the request arrives, not this time), so only a malformed hour or minute is an error.
  */
-export function globalTimeErrorFor(
-  hour: string,
-  min: string,
-  pushType: PushTypeConfig,
-  date: string,
-  blocks: number,
-  now: Date = new Date(),
-): string | null {
+export function globalTimeErrorFor(hour: string, min: string): string | null {
   const h = Number(hour);
   const m = Number(min);
-  const hourOk = hour !== "" && Number.isInteger(h) && h >= 0 && h <= 23;
-  const minOk = min !== "" && Number.isInteger(m) && m >= 0 && m <= 59;
-  if (!hourOk) return "Hour must be a whole number between 0 and 23.";
-  if (!minOk) return "Minute must be a whole number between 0 and 59.";
-  const first = h * 60 + m;
-  const last = first + Math.max(blocks - 1, 0) * ORDER_BLOCK_STEP_MIN;
-  const window = windowLabel(pushType.windowStartMin, pushType.windowEndMin);
-  if (first < pushType.windowStartMin || first > pushType.windowEndMin)
-    return `Pick a start time between ${window} JST.`;
-  if (last > pushType.windowEndMin)
-    return `The last status block would go out at ${pad(Math.floor(last / 60))}:${pad(last % 60)}, after ${window}. Start earlier or use fewer blocks.`;
-  const at = tokyoEpoch(date, h, m);
-  if (at === null) return null;
-  const floor = Math.floor(now.getTime() / 60_000) * 60_000;
-  if (at < floor) return "This start time has already passed in JST. Pick a later one.";
-  if (
-    pushType.leadMs !== undefined &&
-    at + (last - first) * 60_000 - floor > pushType.leadMs
-  )
-    return "Every status block's time must be within the next 2 hours. Start earlier or use fewer blocks.";
+  if (!(hour !== "" && Number.isInteger(h) && h >= 0 && h <= 23))
+    return "Hour must be a whole number between 0 and 23.";
+  if (!(min !== "" && Number.isInteger(m) && m >= 0 && m <= 59))
+    return "Minute must be a whole number between 0 and 59.";
   return null;
 }
 
