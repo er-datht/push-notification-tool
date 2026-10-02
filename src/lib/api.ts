@@ -79,7 +79,7 @@ export interface ApiFieldError {
 
 /**
  * The `error` object every failed response carries (the EMO envelope, see the Responses section
- * of `docs/API-DOC-auto-app-push.md`). Our route handler emits the same shape for its own problems.
+ * of `../fe-docs/API-DOC-auto-app-push.md`). Our route handler emits the same shape for its own problems.
  */
 export interface ApiError {
   error_id?: string;

@@ -49,14 +49,21 @@ export const MIN: FieldConfig = {
   placeholder: "30",
 };
 
-/** One show's code (興行コード). Same key for Normal, In store and Score Push. */
-export const codeField = (span: FieldConfig["span"]): FieldConfig => ({
+/**
+ * One show's code (興行コード). Same key for Normal, In store and Score Push. Only Normal's API
+ * checks the format (`NP-0203`), so the other two pass `check: false`: no format check, and no
+ * `[公演]` stripping either (that runs only for `check: "event"`).
+ */
+export const codeField = (
+  span: FieldConfig["span"],
+  { check = true }: { check?: boolean } = {},
+): FieldConfig => ({
   key: "code",
   label: "Show code (code)",
   span,
   required: true,
   placeholder: "9014500001-P0030056",
-  check: "event",
+  ...(check ? { check: "event" as const } : {}),
 });
 
 /** One show's word (ワード id). The API calls it `performer_id`. */
@@ -90,8 +97,11 @@ export const wordField = (
   chips,
 });
 
-/** A text field that must be digits, but is sent as typed so leading zeros survive (`0106`). */
-export const digitsField = (
+/**
+ * A required text field with no format check — ecs-api has none for Order's order lines. Sent as
+ * typed, so leading zeros survive (`0106`). `numeric` only asks for a number keypad.
+ */
+export const requiredTextField = (
   key: string,
   label: string,
   span: FieldConfig["span"],
@@ -102,7 +112,6 @@ export const digitsField = (
   span,
   required: true,
   numeric: true,
-  check: "digits",
   placeholder,
 });
 

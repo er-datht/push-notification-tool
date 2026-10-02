@@ -41,8 +41,8 @@ export function GlobalTimeSection({
         <p className="mt-1 max-w-[64ch] text-[13.5px] leading-relaxed font-light text-ink-2">
           One start time for the whole run. Each{" "}
           {pushType.noun.toLowerCase()} is timed {ORDER_BLOCK_STEP_MIN} minutes
-          after the one before it, and every time must be within the next 2
-          hours. The times are only labels: Order is published by hand.
+          after the one before it. The times are only labels: Order is
+          published by hand.
         </p>
       </div>
       <div className="flex flex-wrap items-end gap-4 px-5.5 pt-4 pb-6">

@@ -6,7 +6,7 @@ import { DELIV_ID_MAX, LINKS, type LinkKind } from '@/lib/types'
  * payload keys ("link_item is required (AP-0204)") that mean nothing on the form, so it is only a
  * fallback for an id we do not know. Ids are stable, wording is not, so key on the id.
  *
- * The full table, with the field each id lands on, is `docs/UI-FIELD-MAPPING.md`. Keep both in step.
+ * The full table, with the field each id lands on, is `../fe-docs/UI-FIELD-MAPPING.md`. Keep both in step.
  */
 type Wording = string | ((ctx: { label: string }) => string)
 
@@ -33,7 +33,7 @@ const WORDING_BY_ERROR_ID: Record<string, Wording> = {
   'AP-0208': 'Delivery time must be within 2 hours from now.',
   'AP-0209': 'Delivery time must be between 08:00 and 22:00 JST.',
 
-  // Normal Push (docs/API-DOC-normal-push.md). Whole request
+  // Normal Push (../fe-docs/API-DOC-normal-push.md). Whole request
   'NP-0001': 'Some values were not accepted.',
   'NP-0002': 'The API token was not accepted. Check it and try again.',
   'NP-0003': 'Something went wrong. Reload the page and try again.',

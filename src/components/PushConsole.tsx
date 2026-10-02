@@ -223,7 +223,7 @@ export function PushConsole() {
   const dateError = checked ? dateErrorFor(date) : null;
   const globalTimeError =
     checked && pushType.globalTime
-      ? globalTimeErrorFor(globalHour, globalMin, pushType, date, rows.length)
+      ? globalTimeErrorFor(globalHour, globalMin)
       : null;
   const audience = audienceFor(pushType, loginIds, excludedIds);
   const itemCount = rows.reduce((n, r) => n + r.items.length, 0);
@@ -314,7 +314,7 @@ export function PushConsole() {
     const noIds = needsIds && loginIds.length === 0;
     const badDate = dateErrorFor(date);
     const badGlobalTime = pushType.globalTime
-      ? globalTimeErrorFor(globalHour, globalMin, pushType, date, rows.length)
+      ? globalTimeErrorFor(globalHour, globalMin)
       : null;
     setChecked(true);
     // A fresh Execute asks for a fresh verdict, even on the same payload.
