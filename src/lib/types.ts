@@ -77,7 +77,7 @@ export const timeLabel = (values: Record<string, string>) =>
   `${pad(values.hour || "0")}:${pad(values.min || "0")}`;
 
 /** The API reads every time as Asia/Tokyo. Japan stays at UTC+9 all year, so there is no DST. */
-const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+export const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
 /** Today in Asia/Tokyo as `YYYY-MM-DD`, no matter what timezone the browser is in. */
 export function todayInTokyo(now: Date = new Date()): string {

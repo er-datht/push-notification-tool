@@ -3,11 +3,12 @@
  * guideline's Rails commands (`PushTest::Common.create_*_edition`) — see
  * `docs/PUSH-TYPES-FIELD-REFERENCE.md`.
  *
- * Confirmed contracts: Auto App Push (`../fe-docs/API-DOC-auto-app-push.md`) and Normal Push
- * (`../fe-docs/API-DOC-normal-push.md`). The other four have no endpoint on either server yet, so their
- * paths and request keys are guesses (`backendConfirmed: false`):
- *   - In store and Score reuse Normal's show keys (`code` / `performer_id` / `hook`), because the
- *     guideline builds all three from the same `[code, word, type]` show triple.
+ * Confirmed contracts, per server (`backendConfirmed`): Auto App Push
+ * (`../fe-docs/API-DOC-auto-app-push.md`) and Normal Push (`../fe-docs/API-DOC-normal-push.md`) on
+ * both, In store Push (`../fe-docs/API-DOC-in-store-push.md`) on ecs-api only. Everything else has
+ * no endpoint yet, so its paths and request keys are guesses:
+ *   - Score reuses Normal's show keys (`code` / `performer_id` / `hook`), because the guideline
+ *     builds it from the same `[code, word, type]` show triple.
  *   - News keeps `article_id` / `word_id` / `title`; Order uses `status` and `order_lines[]`.
  */
 
@@ -20,7 +21,17 @@ import {
   wordField,
   type FieldConfig,
 } from "@/lib/fields";
-import { hookMix, LINKS, type FormRow, type LinkKind } from "@/lib/types";
+import {
+  hookMix,
+  JST_OFFSET_MS,
+  LINKS,
+  nextDelivId,
+  pad,
+  validateRows,
+  type FormRow,
+  type LinkKind,
+  type Server,
+} from "@/lib/types";
 
 export type PushTypeId =
   | "auto_app_push"
@@ -73,7 +84,10 @@ export interface ItemGroupConfig {
   noun: string;
   fields: FieldConfig[];
   blank: () => Record<string, string>;
-  /** Values every item carries without an input (In store's `hook: in_store`). Shown read-only, sent. */
+  /**
+   * Values the server gives every item itself (In store's `hook: in_store`). Shown read-only, never
+   * sent: In store's API rejects a `hook` key with `400 IS-0004`.
+   */
   fixed?: Record<string, string>;
 }
 
@@ -118,26 +132,38 @@ export interface PushTypeConfig {
   fields: FieldConfig[];
   /** The list of sub-items inside each notification, when the type has one. */
   items?: ItemGroupConfig;
-  /** Default values for a freshly added row (its first item comes from `items.blank()`). */
+  /**
+   * Default values for a freshly added row (its first item comes from `items.blank()`). A field
+   * left empty here is filled from its placeholder on add (`newRowValues` / `withPlaceholders`).
+   */
   blank: () => Record<string, string>;
   /** Seed rows shown the first time this type is opened. */
   samples: SampleRow[];
   /** The review-rail / done-screen card body for one row. */
   preview: (row: FormRow, ctx?: PreviewContext) => PreviewCard;
   /**
-   * The `rails c` command a person must run on STAG at the delivery time, for a type whose
-   * notifications nothing sends by itself (In store, Score, News, Order). Undefined = the type's
-   * own cron sends it.
+   * What the server does with `distribute_now: true`, for a type where it acts on it. `help` is
+   * the line under the checkbox; `line` the review rail's delivery summary. Undefined: the server
+   * accepts the flag but does nothing with it (Auto App).
+   *
+   * `required`: no cron sends this type (In store, Score, News, Order), so distribute_now is the
+   * tool's publish step, the one a developer would otherwise run in `rails c`. With it off the
+   * server only creates the notifications and nothing is sent. Testers never publish by hand.
    */
-  manualPublish?: string;
+  distributeNow?: { help: string; line: string; required?: boolean };
   /** Path our own route handler forwards to on ecs-api. */
   ecsForwardPath: string;
   /** Path segment for our proxy route: `/api/push/{routeSlug}`. */
   routeSlug: string;
   /** Path express is called at directly. */
   expressPath: string;
-  /** False until a backend team confirms the endpoint exists. */
-  backendConfirmed: boolean;
+  /** Per server: false until that server's team confirms the endpoint exists. */
+  backendConfirmed: Record<Server, boolean>;
+  /**
+   * Servers with no endpoint for this type at all (express, for every type but Auto App and
+   * Normal): the review rail disables them and the run goes to ecs-api.
+   */
+  unavailableOn?: Server[];
 }
 
 const TWO_HOURS = 2 * 60 * 60 * 1000;
@@ -302,7 +328,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     ecsForwardPath: "/api/test_notification/auto_app_pushes",
     routeSlug: "auto-app-push",
     expressPath: "/api/notifications/auto-app-pushes",
-    backendConfirmed: true,
+    backendConfirmed: { "ecs-api": true, express: true },
   },
 
   normal_push: {
@@ -362,10 +388,14 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
       },
     ],
     preview: showsPreview(true),
+    distributeNow: {
+      help: "distribute_now. The server tries to publish 30 seconds after the request instead of at the next 10-minute tick — only for a window that has already started.",
+      line: "distribute_now ON, the job runs right away",
+    },
     ecsForwardPath: "/api/test_notification/normal_pushes",
     routeSlug: "normal-push",
     expressPath: "/api/notifications/normal-pushes",
-    backendConfirmed: true,
+    backendConfirmed: { "ecs-api": true, express: true },
   },
 
   last_minute_push: {
@@ -384,7 +414,8 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     readers: "word",
     readersNote: WORD_NOTE,
     globalTime: false,
-    timeHelp: ANY_TIME_HELP,
+    timeHelp:
+      "Any time, JST, even one that has passed. Each notification needs its own time: the server rejects a time another in-store notification already uses.",
     fields: [HOUR, MIN],
     items: {
       key: "shows",
@@ -411,12 +442,19 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
       },
     ],
     preview: (row) => ({ ...showsPreview(true)(row), title: `in_store · ${plural(row.items.length, "show")}` }),
-    // Its queuer runs only at 08:00 on Mondays and Thursdays, so in practice a person publishes it.
-    manualPublish: "edition.notifications.each(&:publish)",
-    ecsForwardPath: "/api/test_notification/last_minute_pushes",
+    // No queuer sends an in-store edition: its time is only its will_publish_at.
+    distributeNow: {
+      help: "distribute_now. Turn it on to send: the server publishes each notification about 30 seconds after it is ready. Leave it off and nothing is sent.",
+      line: "distribute_now ON, published about 30 seconds after it is ready",
+      required: true,
+    },
+    // Only ecs-api has it (`../fe-docs/API-DOC-in-store-push.md`). The express path is a guess and
+    // unused until express has the endpoint: `unavailableOn` keeps every run on ecs-api.
+    ecsForwardPath: "/api/test_notification/in_store_pushes",
     routeSlug: "last-minute-push",
     expressPath: "/api/notifications/last-minute-pushes",
-    backendConfirmed: false,
+    backendConfirmed: { "ecs-api": true, express: false },
+    unavailableOn: ["express"],
   },
 
   score_push: {
@@ -459,11 +497,16 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     ],
     preview: showsPreview(false),
     // The test helper leaves the edition at :edited, so the 10-minute queuer never picks it up.
-    manualPublish: "edition.publish!(at: Time.zone.now)",
+    distributeNow: {
+      help: "distribute_now. Turn it on to send: the server publishes each notification at its time, or right away if that time has passed. Leave it off and nothing is sent.",
+      line: "distribute_now ON, published at each notification's time",
+      required: true,
+    },
     ecsForwardPath: "/api/test_notification/score_pushes",
     routeSlug: "score-push",
     expressPath: "/api/notifications/score-pushes",
-    backendConfirmed: false,
+    backendConfirmed: { "ecs-api": false, express: false },
+    unavailableOn: ["express"],
   },
 
   news_push: {
@@ -529,11 +572,16 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
       line: `Opens SPICE article ${dash(v.article_id)}`,
       meta: `word_id ${dash(v.word_id)}`,
     }),
-    manualPublish: "Epica::ArticleEdition.find(id).publish!",
+    distributeNow: {
+      help: "distribute_now. Turn it on to send: the server publishes the article notification for you. Leave it off and nothing is sent.",
+      line: "distribute_now ON, the server publishes it",
+      required: true,
+    },
     ecsForwardPath: "/api/test_notification/news_pushes",
     routeSlug: "news-push",
     expressPath: "/api/notifications/news-pushes",
-    backendConfirmed: false,
+    backendConfirmed: { "ecs-api": false, express: false },
+    unavailableOn: ["express"],
   },
 
   order_push: {
@@ -647,11 +695,16 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
         meta: `Kogyo ${listShort([...new Set(items.map((i) => `${dash(i.values.kogyo_code)}-${dash(i.values.kogyo_sub_code)}`))])}`,
       };
     },
-    manualPublish: "Epica::OrderedShowsList.find(id).publish!",
+    distributeNow: {
+      help: "distribute_now. Turn it on to send: the server publishes every status block for you. Leave it off and nothing is sent.",
+      line: "distribute_now ON, the server publishes each status block",
+      required: true,
+    },
     ecsForwardPath: "/api/test_notification/order_pushes",
     routeSlug: "order-push",
     expressPath: "/api/notifications/order-pushes",
-    backendConfirmed: false,
+    backendConfirmed: { "ecs-api": false, express: false },
+    unavailableOn: ["express"],
   },
 };
 
@@ -667,4 +720,149 @@ export const PUSH_TYPE_ORDER: PushTypeId[] = [
 
 export function pushTypeForSlug(slug: string): PushTypeConfig | null {
   return Object.values(PUSH_TYPES).find((p) => p.routeSlug === slug) ?? null;
+}
+
+/**
+ * `values` with every empty field set to the example its input shows as a placeholder, so a new
+ * card or item starts out sendable. The link field takes the placeholder of the row's link kind.
+ */
+export function withPlaceholders(
+  fields: FieldConfig[],
+  values: Record<string, string>,
+): Record<string, string> {
+  const out = { ...values };
+  for (const f of fields) {
+    if (out[f.key]) continue;
+    const example = f.link
+      ? LINKS[(out.kind || "web") as LinkKind].placeholder
+      : f.placeholder;
+    if (example) out[f.key] = example;
+  }
+  return out;
+}
+
+/** Minutes between the times `newRowTime` tries. */
+const NEW_ROW_STEP_MIN = 5;
+
+/**
+ * The time for a row added after `rows`: `blank()`'s default when it passes this type's time rules,
+ * else the nearest time that does. The rules are the form's own (`validateRows`: Auto App's window
+ * and 2-hour cap, Normal's window and overlap), plus In store's `IS-0206`: no two notifications in
+ * one run at the same time. Auto App starts looking at now, the rest at the default; both step
+ * forward 5 minutes at a time and wrap past midnight. When nothing passes (e.g. Auto App on a
+ * future date), the default is kept and Execute reports it as usual.
+ */
+function newRowTime(
+  pushType: PushTypeConfig,
+  rows: FormRow[],
+  values: Record<string, string>,
+  date: string,
+  now: Date,
+): { hour: string; min: string } {
+  const fallback = { hour: values.hour, min: values.min };
+  const passes = (minutes: number) => {
+    const time = { hour: pad(Math.floor(minutes / 60)), min: pad(minutes % 60) };
+    if (
+      pushType.id === "last_minute_push" &&
+      rows.some(
+        (r) =>
+          Number(r.values.hour) * 60 + Number(r.values.min) === minutes,
+      )
+    )
+      return null;
+    const row: FormRow = {
+      id: -1,
+      collapsed: false,
+      values: { ...values, ...time },
+      items: [],
+    };
+    // Normal's overlap mark goes on the later of two rows, and the new row is the last one.
+    const errors = validateRows([...rows, row], pushType, date, now).at(-1) ?? [];
+    return errors.some((e) => ["time", "hour", "min"].includes(e.field ?? ""))
+      ? null
+      : time;
+  };
+
+  const byDefault = Number(values.hour) * 60 + Number(values.min);
+  if (Number.isInteger(byDefault) && passes(byDefault)) return fallback;
+
+  // Auto App's 2-hour cap is counted from now, so its search starts at now, rounded up.
+  const jst = new Date(now.getTime() + JST_OFFSET_MS);
+  const nowMin = jst.getUTCHours() * 60 + jst.getUTCMinutes();
+  const from =
+    pushType.leadMs !== undefined
+      ? Math.ceil(nowMin / NEW_ROW_STEP_MIN) * NEW_ROW_STEP_MIN
+      : Number.isInteger(byDefault)
+        ? byDefault
+        : 0;
+  for (let step = 0; step < (24 * 60) / NEW_ROW_STEP_MIN; step++) {
+    const time = passes((from + step * NEW_ROW_STEP_MIN) % (24 * 60));
+    if (time) return time;
+  }
+  return fallback;
+}
+
+/**
+ * `rows` with each time moved, where needed, to one that passes the type's time rules
+ * (`newRowTime`). Rows are checked in order, each against the ones before it. Once a row moves, the
+ * rows after it first try the same shift, so samples keep their spacing: Auto App's 15:30 / 15:35
+ * become now / now + 5. Rows that already pass are returned as they are.
+ */
+export function retimeRows(
+  pushType: PushTypeConfig,
+  rows: FormRow[],
+  date: string,
+  now: Date = new Date(),
+): FormRow[] {
+  if (pushType.globalTime) return rows;
+  const DAY = 24 * 60;
+  let shift = 0;
+  const out: FormRow[] = [];
+  for (const row of rows) {
+    const own = Number(row.values.hour) * 60 + Number(row.values.min);
+    if (!Number.isInteger(own)) {
+      out.push(row);
+      continue;
+    }
+    const start = (((own + shift) % DAY) + DAY) % DAY;
+    const time = newRowTime(
+      pushType,
+      out,
+      { ...row.values, hour: pad(Math.floor(start / 60)), min: pad(start % 60) },
+      date,
+      now,
+    );
+    shift = Number(time.hour) * 60 + Number(time.min) - own;
+    out.push(
+      shift === 0 ? row : { ...row, values: { ...row.values, ...time } },
+    );
+  }
+  return out;
+}
+
+/**
+ * A freshly added row's values: `blank()` filled from the placeholders, at a time that passes the
+ * type's time rules (`newRowTime`). A delivery ID is stepped past every one already in `rows`,
+ * because each row needs its own.
+ */
+export function newRowValues(
+  pushType: PushTypeConfig,
+  rows: FormRow[],
+  date: string,
+  now: Date = new Date(),
+): Record<string, string> {
+  const values = withPlaceholders(pushType.fields, pushType.blank());
+  // Order has one shared start time and no hour/minute on the row.
+  if (!pushType.globalTime)
+    Object.assign(values, newRowTime(pushType, rows, values, date, now));
+  if (values.deliv_id) {
+    const used = new Set(rows.map((r) => (r.values.deliv_id ?? "").trim()));
+    while (used.has(values.deliv_id)) {
+      const next = nextDelivId(values.deliv_id);
+      // An ID with no number at the end cannot be stepped; keep it rather than loop forever.
+      if (next === values.deliv_id) break;
+      values.deliv_id = next;
+    }
+  }
+  return values;
 }
