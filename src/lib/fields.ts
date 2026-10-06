@@ -1,6 +1,6 @@
 /** The fields on a card, per push type. See `docs/PUSH-TYPES-FIELD-REFERENCE.md` for the source. */
 
-export type FieldCheck = "digits" | "event" | "performer";
+export type FieldCheck = "event" | "id";
 
 export interface SegOption {
   value: string;
@@ -21,6 +21,8 @@ export interface FieldConfig {
   /** inputMode="numeric". Purely a UX hint; `check` is what validates and `sendAs` what converts. */
   numeric?: boolean;
   check?: FieldCheck;
+  /** Most characters the API takes. Caps the input and is checked by `errorsFor`. */
+  maxLength?: number;
   /** Sent as a JSON number instead of the typed text. Only for real ids; codes like `0106` stay text. */
   sendAs?: "number";
   /** Segmented control instead of a text input. */
@@ -66,7 +68,7 @@ export const codeField = (
   ...(check ? { check: "event" as const } : {}),
 });
 
-/** One show's word (ワード id). The API calls it `performer_id`. */
+/** A word (ワード id): a show's, or News' own. The API calls it `performer_id` in both. */
 export const performerField = (
   span: FieldConfig["span"],
   chips?: string[],
@@ -77,22 +79,7 @@ export const performerField = (
   required: true,
   numeric: true,
   placeholder: chips ? chips[0] : "2762",
-  check: "performer",
-  sendAs: "number",
-  chips,
-});
-
-export const wordField = (
-  span: FieldConfig["span"],
-  chips?: string[],
-): FieldConfig => ({
-  key: "word_id",
-  label: "Word ID (word_id)",
-  span,
-  required: true,
-  numeric: true,
-  placeholder: chips ? chips[0] : "2762",
-  check: "digits",
+  check: "id",
   sendAs: "number",
   chips,
 });
@@ -117,9 +104,8 @@ export const requiredTextField = (
 
 /** A show code, optionally followed by one `P021…` performance part. */
 const EVENT_RE = /^\d+-P\d+(?:P\d+)?$/;
-const DIGITS_RE = /^\d+$/;
-/** The API takes a positive whole number of at most 16 digits. */
-const PERFORMER_RE = /^[1-9]\d{0,15}$/;
+/** The API's id rule (word IDs, News' article ID): a positive whole number of at most 16 digits. */
+const ID_RE = /^[1-9]\d{0,15}$/;
 
 /** The test sheet's 対象ID column starts with `[公演]`; the API rejects it, so it is dropped. */
 export function normalizeCode(value: string): string {
@@ -134,12 +120,10 @@ export function isExpandableCode(value: string): boolean {
 
 export function checkError(field: FieldConfig, value: string): string | null {
   const label = field.label.replace(/ \(.*\)$/, "");
-  if (field.check === "digits" && !DIGITS_RE.test(value))
-    return `${label} must be numbers only.`;
   if (field.check === "event" && !EVENT_RE.test(normalizeCode(value)))
     return `${label} should look like 9014500001-P0030056 or 9011910001-P0030007P021005.`;
-  if (field.check === "performer") {
-    if (!PERFORMER_RE.test(value))
+  if (field.check === "id") {
+    if (!ID_RE.test(value))
       return `${label} must be a whole number above 0, at most 16 digits.`;
     if (!Number.isSafeInteger(Number(value)))
       return `${label} is too large to send exactly. Check the number.`;

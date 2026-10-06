@@ -240,8 +240,8 @@ function fieldErrors(
       add(field, f.requiredMessage ?? `Enter the ${cleanLabel(f).toLowerCase()}.`);
     return;
   }
-  if (f.key === "deliv_id" && raw.length > DELIV_ID_MAX) {
-    add(field, `Delivery ID must be ${DELIV_ID_MAX} characters or fewer.`);
+  if (f.maxLength !== undefined && raw.length > f.maxLength) {
+    add(field, `${cleanLabel(f)} must be ${f.maxLength} characters or fewer.`);
     return;
   }
   if (f.check) {

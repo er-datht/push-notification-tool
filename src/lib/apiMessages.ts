@@ -98,6 +98,24 @@ const WORDING_BY_ERROR_ID: Record<string, Wording> = {
   'SP-0204': 'Word ID must be a whole number above 0, at most 16 digits.',
   'SP-0205': 'Pick preorder or firstcome.',
   'SP-0206': 'Enter a valid delivery time.',
+
+  // News Push (../fe-docs/API-DOC-news-push.md). Whole request. NW-0001 is assumed to be the 422
+  // envelope's own id, as SP-0001 is for Score. There is no 502: News calls no outside API.
+  'NW-0001': 'Some values were not accepted.',
+  'NW-0002': 'The API token was not accepted. Check it and try again.',
+  'NW-0003': 'Something went wrong. Reload the page and try again.',
+  'NW-0004': 'Something went wrong. Reload the page and try again.',
+  'NW-0005':
+    'The server could not create the push. Some notifications may already exist, so ask the backend team before sending again.',
+  // Run settings
+  'NW-0101': 'Enter a valid date.',
+  'NW-0103': 'Add at least one notification.',
+  // One notification
+  'NW-0201': 'Enter a valid delivery time.',
+  'NW-0202': 'Article ID must be a whole number above 0, at most 16 digits.',
+  'NW-0203': 'Word ID must be a whole number above 0, at most 16 digits.',
+  'NW-0204': 'Enter the title.',
+  'NW-0205': 'Title must be 255 characters or fewer.',
 }
 
 const KIND_BY_CODE = Object.fromEntries(
