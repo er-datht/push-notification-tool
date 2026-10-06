@@ -38,17 +38,19 @@ interface Props {
 
 /** When the push actually goes out, in a few words — it differs by push type. */
 function deliveryLine(pushType: PushTypeConfig, distributeNow: boolean): string {
-  if (pushType.manualPublish) return "sent only when someone runs publish! in rails c";
+  if (distributeNow && pushType.distributeNow) return pushType.distributeNow.line;
+  if (pushType.distributeNow?.required)
+    return "distribute_now OFF, so nothing is sent";
   if (pushType.id === "auto_app_push")
     return "the S3 upload is off on the server, so nothing is sent";
-  return distributeNow
-    ? "distribute_now ON, the job runs right away"
-    : "picked up within the next 10 minutes";
+  return "picked up within the next 10 minutes";
 }
 
 const SERVERS: { value: Server; sub: string; disabled?: boolean }[] = [
   { value: "ecs-api", sub: "The old Rails batch path" },
-  { value: "express", sub: "The new Node/Express service" },
+  // Off for every push type for now. Remove `disabled` to bring it back for Auto App and Normal;
+  // the other types stay off through their own `unavailableOn`.
+  { value: "express", sub: "The new Node/Express service", disabled: true },
 ];
 
 export function ReviewRail({
@@ -88,37 +90,48 @@ export function ReviewRail({
           onValueChange={(v) => onServerChange(v as Server)}
           className="gap-0"
         >
-          {SERVERS.map((s) => (
-            <label
-              key={s.value}
-              className={cn(
-                "flex items-start gap-2.5 rounded-lg px-2.5 py-[9px] transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring",
-                server === s.value && "bg-accent",
-                s.disabled ? "cursor-not-allowed text-ink-4" : "cursor-pointer",
-              )}
-              title={s.disabled ? "Coming soon" : undefined}
-            >
-              <RadioGroupItem
-                value={s.value}
-                disabled={s.disabled}
-                className="mt-0.5"
-              />
-              <span className="text-[13.5px]">
-                {SERVER_LABEL[s.value]}
-                {s.disabled && (
-                  <Badge
-                    variant="secondary"
-                    className="ml-2 h-4 px-1.5 text-[10px] tracking-[0.06em] text-ink-4"
-                  >
-                    SOON
-                  </Badge>
+          {SERVERS.map((s) => {
+            // Off for every type, or only for this one (express has only Auto App and Normal).
+            const forType = !!pushType.unavailableOn?.includes(s.value);
+            const off = s.disabled || forType;
+            return (
+              <label
+                key={s.value}
+                className={cn(
+                  "flex items-start gap-2.5 rounded-lg px-2.5 py-[9px] transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring",
+                  server === s.value && "bg-accent",
+                  off ? "cursor-not-allowed text-ink-4" : "cursor-pointer",
                 )}
-                <span className="block text-xs font-light text-ink-4">
-                  {s.sub}
+                title={
+                  forType
+                    ? `No ${pushType.label} endpoint on ${SERVER_LABEL[s.value]} yet`
+                    : s.disabled
+                      ? "Coming soon"
+                      : undefined
+                }
+              >
+                <RadioGroupItem
+                  value={s.value}
+                  disabled={off}
+                  className="mt-0.5"
+                />
+                <span className="text-[13.5px]">
+                  {SERVER_LABEL[s.value]}
+                  {off && (
+                    <Badge
+                      variant="secondary"
+                      className="ml-2 h-4 px-1.5 text-[10px] tracking-[0.06em] text-ink-4"
+                    >
+                      SOON
+                    </Badge>
+                  )}
+                  <span className="block text-xs font-light text-ink-4">
+                    {s.sub}
+                  </span>
                 </span>
-              </span>
-            </label>
-          ))}
+              </label>
+            );
+          })}
         </RadioGroup>
         <div className="mt-3 border-t pt-3.5">
           <Label htmlFor="ptc-api-token" className="mb-1.5">
@@ -224,10 +237,10 @@ export function ReviewRail({
           </span>
         </p>
 
-        {!pushType.backendConfirmed && (
+        {!pushType.backendConfirmed[server] && (
           <p className="-mt-3 mb-[18px] text-xs leading-relaxed font-light text-ink-4">
-            This push type&apos;s endpoint is not yet confirmed with the backend
-            team — Execute may fail.
+            This push type&apos;s endpoint on {SERVER_LABEL[server]} is not yet
+            confirmed with the backend team — Execute may fail.
           </p>
         )}
 

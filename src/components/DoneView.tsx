@@ -17,7 +17,7 @@ interface Props {
   rows: FormRow[];
   /** The exact body the API said 201 to — the record of the run when the 201 is empty. */
   payload: PushPayload;
-  /** What a 201 with a body handed back (Normal Push), in the order the editions were sent. */
+  /** What a 201 with a body handed back (Normal, In store), in the order the editions were sent. */
   created: CreatedEdition[] | null;
   server: Server;
   pushType: PushTypeConfig;
@@ -30,6 +30,13 @@ const tableDataCellClass = "border-b border-line-3 px-5 py-4 align-top";
 
 /** `HH:MM` out of an ISO time with its `+09:00` offset, read as written rather than re-rendered locally. */
 const clock = (iso: string) => /T(\d{2}:\d{2})/.exec(iso)?.[1] ?? iso;
+
+/** The time a created edition reports: Normal's one-hour window, or In store's single time. */
+function createdTime(made: CreatedEdition): string | null {
+  if (made.period_start && made.period_end)
+    return `${clock(made.period_start)}–${clock(made.period_end)}`;
+  return made.will_publish_at ? clock(made.will_publish_at) : null;
+}
 
 /** Auto App's kogyo link is reduced by the server before it writes the file, and the empty 201
  *  doesn't say so — show the value it will actually use. Every other type reads `pushType.preview`. */
@@ -70,10 +77,21 @@ function whatHappened(
         : " The server publishes at the next 10-minute tick inside each window."
     }`;
   }
-  const manual = pushType.manualPublish
-    ? `Nothing sends this push type by itself: at the delivery time someone has to run ${pushType.manualPublish} in rails c on STAG, or no push arrives. `
-    : "";
-  return `The API accepted the run. ${manual}This push type's endpoint is not confirmed with the backend team yet, so ask them what happens next.`;
+  // No cron sends these types: distribute_now is the publish step, so say plainly when it was off.
+  const notSent =
+    " distribute_now was off, so nothing was sent: the server only created the notifications. To send, run it again with distribute_now on.";
+  if (pushType.id === "last_minute_push" && server === "ecs-api")
+    return `The API created the in-store notifications. Background workers now find each word's subscribers and write one notification per account; the time you set is only a label, nothing sends at it.${
+      distributeNow
+        ? " distribute_now was on, so the server publishes each one about 30 seconds after its notifications are ready, waiting up to about 5 minutes. If they never get ready, nothing is sent and the server raises an alert."
+        : notSent
+    }`;
+  const sending = !pushType.distributeNow
+    ? ""
+    : distributeNow
+      ? " distribute_now was on, so the server publishes it for you."
+      : notSent;
+  return `The API accepted the run.${sending} This push type's endpoint is not confirmed with the backend team yet, so ask them what happens next.`;
 }
 
 /** Why the numbers above are not a delivery count. */
@@ -126,6 +144,7 @@ export function DoneView({
             {editions.map((edition, i) => {
               const row = rows[i];
               const made = created?.[i];
+              const madeTime = made ? createdTime(made) : null;
               const [hour, min] = edition.publish_hour_min as [number, number];
               const d = detailsFor(pushType, row, ctx);
               return (
@@ -133,9 +152,7 @@ export function DoneView({
                   <td
                     className={`${tableDataCellClass} font-semibold whitespace-nowrap tabular-nums`}
                   >
-                    {made
-                      ? `${date} ${clock(made.period_start)}–${clock(made.period_end)} JST`
-                      : `${date} ${pad(hour)}:${pad(min)} JST`}
+                    {`${date} ${madeTime ?? `${pad(hour)}:${pad(min)}`} JST`}
                   </td>
                   <td className={tableDataCellClass}>{d.title}</td>
                   <td
@@ -185,6 +202,12 @@ export function DoneView({
         <FieldHelp className="mt-3">
           The same hours are now taken. Pick new times before sending again, or
           the server rejects them.
+        </FieldHelp>
+      )}
+      {pushType.id === "last_minute_push" && created && (
+        <FieldHelp className="mt-3">
+          The same times are now taken by these in-store notifications. Pick new
+          times before sending again, or the server rejects them.
         </FieldHelp>
       )}
     </div>

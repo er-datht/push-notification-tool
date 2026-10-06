@@ -22,8 +22,11 @@ import {
 import { dismissApiErrors, toastApiError } from "@/lib/toast";
 import { loadSettings, saveSettings } from "@/lib/storage";
 import {
+  newRowValues,
   PUSH_TYPE_ORDER,
   PUSH_TYPES,
+  retimeRows,
+  withPlaceholders,
   type PushTypeConfig,
   type PushTypeId,
 } from "@/lib/pushTypes";
@@ -107,7 +110,12 @@ export function PushConsole() {
   const [pushTypeId, setPushTypeId] = useState<PushTypeId>("auto_app_push");
   const pushType = PUSH_TYPES[pushTypeId];
   const [done, setDone] = useState(false);
-  const [server, setServer] = useState<Server>("ecs-api");
+  const [chosenServer, setServer] = useState<Server>("ecs-api");
+  // A type with no endpoint on the chosen server goes to ecs-api. The choice itself is kept, so
+  // switching back to a type express has brings it back.
+  const server: Server = pushType.unavailableOn?.includes(chosenServer)
+    ? "ecs-api"
+    : chosenServer;
   // The X-APIToken lives in state only. It is a secret, so it is never written to localStorage.
   const [apiToken, setApiToken] = useState("");
   // What the API said about the last token it was sent. Cleared as soon as the token changes.
@@ -138,7 +146,7 @@ export function PushConsole() {
   const [submitting, setSubmitting] = useState(false);
   // The payload the API said 201 to. Auto App's 201 is empty, so this is the whole record of that run.
   const [sent, setSent] = useState<PushPayload | null>(null);
-  // What a 201 with a body handed back (Normal Push): the editions the server created.
+  // What a 201 with a body handed back (Normal, In store): the editions the server created.
   const [created, setCreated] = useState<CreatedEdition[] | null>(null);
   const [apiVerdict, setApiVerdict] = useState<ApiVerdict | null>(null);
   // The DOM id of the first thing that needs fixing. A card below the fold gets marked red
@@ -150,6 +158,7 @@ export function PushConsole() {
     const today = todayInTokyo();
     setDate(today);
     setMinDate(today);
+    return today;
   };
 
   const setRows = (fn: (rs: FormRow[]) => FormRow[]) =>
@@ -163,7 +172,16 @@ export function PushConsole() {
   // hydrate against a different one.
   /* oxlint-disable react/set-state-in-effect */
   useEffect(() => {
-    resetDate();
+    const today = resetDate();
+    // The samples' fixed times can break a rule read from the clock (Auto App's 2-hour cap), so
+    // they are moved to pass it here, after mount, never in the prerendered seed.
+    const now = new Date();
+    setRowsByType((byType) => {
+      const out = { ...byType };
+      for (const id of PUSH_TYPE_ORDER)
+        out[id] = retimeRows(PUSH_TYPES[id], byType[id], today, now);
+      return out;
+    });
     const saved = loadSettings();
     if (!saved) return;
     if (saved.loginIds.length) setLoginIds(saved.loginIds);
@@ -264,8 +282,15 @@ export function PushConsole() {
       {
         id: nextId,
         collapsed: false,
-        values: pushType.blank(),
-        items: group ? [{ id: nextId + 1, values: group.blank() }] : [],
+        values: newRowValues(pushType, rs, date),
+        items: group
+          ? [
+              {
+                id: nextId + 1,
+                values: withPlaceholders(group.fields, group.blank()),
+              },
+            ]
+          : [],
       },
     ]);
     setNextId((n) => n + 2);
@@ -293,7 +318,16 @@ export function PushConsole() {
     setRows((rs) =>
       rs.map((r) =>
         r.id === rowId
-          ? { ...r, items: [...r.items, { id: nextId, values: group.blank() }] }
+          ? {
+              ...r,
+              items: [
+                ...r.items,
+                {
+                  id: nextId,
+                  values: withPlaceholders(group.fields, group.blank()),
+                },
+              ],
+            }
           : r,
       ),
     );
@@ -535,7 +569,8 @@ export function PushConsole() {
                   onDateChange={setDate}
                   distributeNow={distributeNow}
                   onDistributeNowChange={setDistributeNow}
-                  distributeWorks={pushType.id === "normal_push"}
+                  distributeHelp={pushType.distributeNow?.help}
+                  distributeRequired={pushType.distributeNow?.required ?? false}
                   prereqs={pushType.prereqs}
                 />
 
@@ -710,8 +745,12 @@ export function PushConsole() {
           itemsText ? ` (${itemsText})` : ""
         } to ${SERVER_LABEL[server]} in STAG for ${date} JST, for ${audience}. ${
           distributeNow
-            ? "distribute_now is ON, so the server tries to publish right away."
-            : "The batch picks it up within the next 10 minutes."
+            ? pushType.distributeNow
+              ? "distribute_now is ON, so the server publishes it for you."
+              : "distribute_now is ON, but the server does nothing with it for this push type yet."
+            : pushType.distributeNow?.required
+              ? "distribute_now is OFF, so the server only creates the notifications and nothing is sent."
+              : "The batch picks it up within the next 10 minutes."
         } After that you cannot take it back.`}
         onCancel={() => setConfirmOpen(false)}
         onConfirm={execute}

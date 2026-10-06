@@ -95,7 +95,7 @@ export async function POST(
   }
 
   // A 404, and Auto App's 201, have no body at all, so never call res.json() here. Everything else
-  // — including Normal Push's 201, which lists the created editions — is passed straight through.
+  // — including Normal and In store's 201, which list the created editions — is passed straight through.
   const text = await res.text();
   if (!text) return new Response(null, { status: res.status });
 

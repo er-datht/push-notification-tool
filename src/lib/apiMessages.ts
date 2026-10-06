@@ -55,6 +55,27 @@ const WORDING_BY_ERROR_ID: Record<string, Wording> = {
   'NP-0206': 'Enter a valid delivery time.',
   'NP-0207': 'Delivery time must be between 08:00 and 21:00 JST, so the one-hour window ends by 22:00.',
   'NP-0208': 'That hour is already taken by another notification. Pick a different hour.',
+
+  // In store Push (../fe-docs/API-DOC-in-store-push.md). Whole request. IS-0001 is not in that
+  // doc's tables; it is the 422 envelope's own id, as NP-0001 is for Normal.
+  'IS-0001': 'Some values were not accepted.',
+  'IS-0002': 'The API token was not accepted. Check it and try again.',
+  'IS-0003': 'Something went wrong. Reload the page and try again.',
+  'IS-0004': 'Something went wrong. Reload the page and try again.',
+  'IS-0005':
+    'The server could not create the push. Some notifications may already exist, so ask the backend team before sending again.',
+  'IS-0006':
+    'The e+ search API did not answer, so a show code could not be expanded. Notifications before it may already exist. A full code with a P021… part avoids the search.',
+  // Run settings
+  'IS-0101': 'Enter a valid date.',
+  'IS-0103': 'Add at least one notification.',
+  // One notification, or one show in it
+  'IS-0201': 'Add at least one show.',
+  'IS-0202': 'Enter the show code.',
+  'IS-0203': 'Enter a valid show code, like 9063440001-P0030012. Leave out the [公演] prefix.',
+  'IS-0204': 'Word ID must be a whole number above 0, at most 16 digits.',
+  'IS-0205': 'Enter a valid delivery time.',
+  'IS-0206': 'That time is already used by another in-store notification. Pick a different time.',
 }
 
 const KIND_BY_CODE = Object.fromEntries(

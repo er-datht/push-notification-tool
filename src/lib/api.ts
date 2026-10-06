@@ -42,19 +42,23 @@ export interface PushPayload {
   distribute_now: boolean;
 }
 
-/** One edition a `201` hands back. Only Normal Push answers with these; Auto App's 201 is empty. */
+/**
+ * One edition a `201` hands back (Normal Push, In store Push; Auto App's 201 is empty). Normal's
+ * has a one-hour window (`period_start`/`period_end`), In store's a single `will_publish_at`.
+ */
 export interface CreatedEdition {
   id: number;
-  period_start: string;
-  period_end: string;
+  period_start?: string;
+  period_end?: string;
+  will_publish_at?: string;
   status: string;
   topics_count: number;
 }
 
 export type SubmitResult =
   /**
-   * Auto App's `201` has no body, so the done screen is drawn from the payload. Normal Push's
-   * `201` lists the editions it created, handed back as `created`.
+   * Auto App's `201` has no body, so the done screen is drawn from the payload. Normal and In
+   * store Push's `201` lists the editions it created, handed back as `created`.
    */
   | { ok: true; created?: CreatedEdition[] }
   /**
@@ -136,7 +140,7 @@ export function buildPayload(
       edition[group.key] = r.items.map((item) => {
         const out: PushItemPayload = {};
         for (const f of group.fields) out[f.key] = sendValue(f, item.values[f.key]);
-        return { ...out, ...group.fixed };
+        return out;
       });
     }
     return edition;
@@ -285,7 +289,7 @@ export async function submitPush(
     );
   }
 
-  // Auto App's 201 is empty — zero bytes. Normal Push's 201 lists the editions it created. Read a
+  // Auto App's 201 is empty — zero bytes. Normal and In store's 201 list the editions created. Read a
   // body only when there is one, and never fail the run over it: the server already said yes.
   if (res.ok) {
     const text = await res.text().catch(() => "");
@@ -352,7 +356,7 @@ export async function submitPush(
   // No error_id/code means we could not read this as the shared envelope at all. For a push type
   // whose endpoint is still a guess, that is plausibly why — say so rather than leaving the tester
   // to wonder.
-  if (!error.error_id && !error.code && !pushType.backendConfirmed) {
+  if (!error.error_id && !error.code && !pushType.backendConfirmed[server]) {
     error.message += ` This push type's endpoint path (${url}) is unconfirmed with the backend team — this may be why.`;
   }
   return { ok: false, rowErrors: [], tokenError: null, error };

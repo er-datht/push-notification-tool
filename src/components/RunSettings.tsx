@@ -13,8 +13,10 @@ interface Props {
   onDateChange: (v: string) => void;
   distributeNow: boolean;
   onDistributeNowChange: (v: boolean) => void;
-  /** True where the server really acts on distribute_now (Normal Push). */
-  distributeWorks: boolean;
+  /** What the server does with distribute_now, where it acts on it (Normal, In store). */
+  distributeHelp?: string;
+  /** True where nothing sends the push without distribute_now (In store, Score, News, Order). */
+  distributeRequired: boolean;
   /** The user settings that must be ON for this push type, shown read-only. */
   prereqs: string[];
 }
@@ -27,7 +29,8 @@ export function RunSettings({
   onDateChange,
   distributeNow,
   onDistributeNowChange,
-  distributeWorks,
+  distributeHelp,
+  distributeRequired,
   prereqs,
 }: Props) {
   return (
@@ -72,10 +75,17 @@ export function RunSettings({
           <span className="text-[13.5px] leading-normal">
             配信を今すぐ実行 — run the job right away
             <br />
-            <span className="text-xs font-light text-ink-4">
-              {distributeWorks
-                ? "distribute_now. The server tries to publish 30 seconds after the request instead of at the next 10-minute tick — only for a window that has already started."
-                : "distribute_now. Skips the 10-minute wait once delivery is on. The server accepts it but it does nothing yet."}
+            <span
+              className={cn(
+                "text-xs font-light",
+                // Off on a type nothing else sends: the run would create notifications and send none.
+                distributeRequired && !distributeNow
+                  ? "text-red-ink"
+                  : "text-ink-4",
+              )}
+            >
+              {distributeHelp ??
+                "distribute_now. Skips the 10-minute wait once delivery is on. The server accepts it but it does nothing yet."}
             </span>
           </span>
         </label>
