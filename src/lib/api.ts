@@ -43,8 +43,9 @@ export interface PushPayload {
 }
 
 /**
- * One edition a `201` hands back (Normal Push, In store Push; Auto App's 201 is empty). Normal's
- * has a one-hour window (`period_start`/`period_end`), In store's a single `will_publish_at`.
+ * One edition a `201` hands back (Normal, In store and Score Push; Auto App's 201 is empty).
+ * Normal's and Score's have a one-hour window (`period_start`/`period_end`), In store's a single
+ * `will_publish_at`. Only Score's says how many recipients are left (`notifications_count`).
  */
 export interface CreatedEdition {
   id: number;
@@ -53,12 +54,13 @@ export interface CreatedEdition {
   will_publish_at?: string;
   status: string;
   topics_count: number;
+  notifications_count?: number;
 }
 
 export type SubmitResult =
   /**
-   * Auto App's `201` has no body, so the done screen is drawn from the payload. Normal and In
-   * store Push's `201` lists the editions it created, handed back as `created`.
+   * Auto App's `201` has no body, so the done screen is drawn from the payload. Normal, In store
+   * and Score Push's `201` lists the editions it created, handed back as `created`.
    */
   | { ok: true; created?: CreatedEdition[] }
   /**
@@ -289,8 +291,9 @@ export async function submitPush(
     );
   }
 
-  // Auto App's 201 is empty — zero bytes. Normal and In store's 201 list the editions created. Read a
-  // body only when there is one, and never fail the run over it: the server already said yes.
+  // Auto App's 201 is empty — zero bytes. Normal, In store and Score's 201 list the editions
+  // created. Read a body only when there is one, and never fail the run over it: the server
+  // already said yes.
   if (res.ok) {
     const text = await res.text().catch(() => "");
     if (!text) return { ok: true };

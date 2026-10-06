@@ -5,11 +5,10 @@
  *
  * Confirmed contracts, per server (`backendConfirmed`): Auto App Push
  * (`../fe-docs/API-DOC-auto-app-push.md`) and Normal Push (`../fe-docs/API-DOC-normal-push.md`) on
- * both, In store Push (`../fe-docs/API-DOC-in-store-push.md`) on ecs-api only. Everything else has
- * no endpoint yet, so its paths and request keys are guesses:
- *   - Score reuses Normal's show keys (`code` / `performer_id` / `hook`), because the guideline
- *     builds it from the same `[code, word, type]` show triple.
- *   - News keeps `article_id` / `word_id` / `title`; Order uses `status` and `order_lines[]`.
+ * both, In store Push (`../fe-docs/API-DOC-in-store-push.md`) and Score Push
+ * (`../fe-docs/API-DOC-score-push.md`) on ecs-api only. News and Order have no endpoint yet, so
+ * their paths and request keys are guesses: News keeps `article_id` / `word_id` / `title`; Order
+ * uses `status` and `order_lines[]`.
  */
 
 import {
@@ -502,10 +501,12 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
       line: "distribute_now ON, published at each notification's time",
       required: true,
     },
+    // Only ecs-api has it (`../fe-docs/API-DOC-score-push.md`). The express path is a guess and
+    // unused until express has the endpoint: `unavailableOn` keeps every run on ecs-api.
     ecsForwardPath: "/api/test_notification/score_pushes",
     routeSlug: "score-push",
     expressPath: "/api/notifications/score-pushes",
-    backendConfirmed: { "ecs-api": false, express: false },
+    backendConfirmed: { "ecs-api": true, express: false },
     unavailableOn: ["express"],
   },
 

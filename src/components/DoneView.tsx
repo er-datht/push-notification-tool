@@ -17,7 +17,7 @@ interface Props {
   rows: FormRow[];
   /** The exact body the API said 201 to — the record of the run when the 201 is empty. */
   payload: PushPayload;
-  /** What a 201 with a body handed back (Normal, In store), in the order the editions were sent. */
+  /** What a 201 with a body handed back (Normal, In store, Score), in the order the editions were sent. */
   created: CreatedEdition[] | null;
   server: Server;
   pushType: PushTypeConfig;
@@ -84,6 +84,12 @@ function whatHappened(
     return `The API created the in-store notifications. Background workers now find each word's subscribers and write one notification per account; the time you set is only a label, nothing sends at it.${
       distributeNow
         ? " distribute_now was on, so the server publishes each one about 30 seconds after its notifications are ready, waiting up to about 5 minutes. If they never get ready, nothing is sent and the server raises an alert."
+        : notSent
+    }`;
+  if (pushType.id === "score_push" && server === "ecs-api")
+    return `The API created the score notifications, one for each login ID that passed the checks. Each one goes out at the time you set.${
+      distributeNow
+        ? " distribute_now was on, so the server publishes each one at its time, or right away if that time has passed."
         : notSent
     }`;
   const sending = !pushType.distributeNow
@@ -163,9 +169,22 @@ export function DoneView({
                   <td
                     className={`${tableDataCellClass} font-light break-words text-ink-4`}
                   >
-                    {made
-                      ? `Edition #${made.id} · ${made.topics_count} topic${made.topics_count === 1 ? "" : "s"}`
-                      : row
+                    {made ? (
+                      <>
+                        {`Edition #${made.id} · ${made.topics_count} topic${made.topics_count === 1 ? "" : "s"}`}
+                        {made.notifications_count !== undefined && (
+                          <span
+                            className={
+                              made.notifications_count === 0
+                                ? "font-semibold text-red-ink"
+                                : undefined
+                            }
+                          >
+                            {` · ${made.notifications_count} recipient${made.notifications_count === 1 ? "" : "s"}`}
+                          </span>
+                        )}
+                      </>
+                    ) : row
                         ? pushType.preview(row, ctx).meta
                         : "—"}
                   </td>
@@ -189,6 +208,13 @@ export function DoneView({
           ? "The edition numbers come from the server — give them to a backend engineer to look the delivery up."
           : "“Run label” is generated here for reference, not by the API — the API itself returns no id."}
       </p>
+      {created?.some((made) => made.notifications_count === 0) && (
+        <p className="mt-3 text-[13.5px] leading-relaxed font-semibold text-red-ink">
+          No login ID matched a customer with push_score_weekly on, so nothing
+          will arrive for the editions with 0 recipients. Check the Recipients
+          list and the test accounts&apos; settings.
+        </p>
+      )}
       <Button className="mt-9" onClick={onStartOver}>
         Start another run
       </Button>
