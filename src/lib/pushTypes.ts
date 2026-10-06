@@ -5,10 +5,9 @@
  *
  * Confirmed contracts, per server (`backendConfirmed`): Auto App Push
  * (`../fe-docs/API-DOC-auto-app-push.md`) and Normal Push (`../fe-docs/API-DOC-normal-push.md`) on
- * both, In store Push (`../fe-docs/API-DOC-in-store-push.md`) and Score Push
- * (`../fe-docs/API-DOC-score-push.md`) on ecs-api only. News and Order have no endpoint yet, so
- * their paths and request keys are guesses: News keeps `article_id` / `word_id` / `title`; Order
- * uses `status` and `order_lines[]`.
+ * both; In store, Score and News Push (`../fe-docs/API-DOC-{in-store,score,news}-push.md`) on
+ * ecs-api only. Order has no endpoint yet, so its path and request keys (`status`,
+ * `order_lines[]`) are guesses.
  */
 
 import {
@@ -17,10 +16,10 @@ import {
   HOUR,
   MIN,
   performerField,
-  wordField,
   type FieldConfig,
 } from "@/lib/fields";
 import {
+  DELIV_ID_MAX,
   hookMix,
   JST_OFFSET_MS,
   LINKS,
@@ -271,6 +270,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
         span: 4,
         required: true,
         placeholder: "H020064377",
+        maxLength: DELIV_ID_MAX,
         requiredMessage:
           "Enter a delivery ID. The batch uses it to find the campaign.",
       },
@@ -522,10 +522,11 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     prereqs: [
       "Notification setting (by_word) is ON",
       "User subscribes to the word",
+      "User has signed in to the v2 app",
     ],
     readers: "word",
     readersNote:
-      "No recipient list for this type. The server sends to every account subscribed to the word ID — make sure your test accounts subscribe to it.",
+      "No recipient list for this type. The server sends to every account that follows the word ID, has signed in to the v2 app and has by_word on — make sure your test accounts do.",
     globalTime: false,
     timeHelp: ANY_TIME_HELP,
     fields: [
@@ -537,16 +538,17 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
         span: 6,
         required: true,
         numeric: true,
-        check: "digits",
+        check: "id",
         sendAs: "number",
         placeholder: "239541",
       },
-      wordField(6, ["2762"]),
+      performerField(6, ["2762"]),
       {
         key: "title",
         label: "Title (title)",
         span: 12,
         required: true,
+        maxLength: 255,
         placeholder: "2020_06_GA確認用_ワードへ",
       },
     ],
@@ -554,7 +556,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
       hour: "16",
       min: "40",
       article_id: "",
-      word_id: "2762",
+      performer_id: "2762",
       title: "",
     }),
     samples: [
@@ -563,7 +565,7 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
           hour: "16",
           min: "40",
           article_id: "239541",
-          word_id: "2762",
+          performer_id: "2762",
           title: "2020_06_GA確認用_ワードへ",
         },
       },
@@ -571,17 +573,19 @@ export const PUSH_TYPES: Record<PushTypeId, PushTypeConfig> = {
     preview: ({ values: v }) => ({
       title: v.title || "(no title)",
       line: `Opens SPICE article ${dash(v.article_id)}`,
-      meta: `word_id ${dash(v.word_id)}`,
+      meta: `performer_id ${dash(v.performer_id)}`,
     }),
     distributeNow: {
-      help: "distribute_now. Turn it on to send: the server publishes the article notification for you. Leave it off and nothing is sent.",
-      line: "distribute_now ON, the server publishes it",
+      help: "distribute_now. Turn it on to send: the server publishes each notification at its time, or right away if that time has passed. Leave it off and nothing is sent.",
+      line: "distribute_now ON, published at each notification's time",
       required: true,
     },
+    // Only ecs-api has it (`../fe-docs/API-DOC-news-push.md`). The express path is a guess and
+    // unused until express has the endpoint: `unavailableOn` keeps every run on ecs-api.
     ecsForwardPath: "/api/test_notification/news_pushes",
     routeSlug: "news-push",
     expressPath: "/api/notifications/news-pushes",
-    backendConfirmed: { "ecs-api": false, express: false },
+    backendConfirmed: { "ecs-api": true, express: false },
     unavailableOn: ["express"],
   },
 

@@ -17,7 +17,7 @@ interface Props {
   rows: FormRow[];
   /** The exact body the API said 201 to — the record of the run when the 201 is empty. */
   payload: PushPayload;
-  /** What a 201 with a body handed back (Normal, In store, Score), in the order the editions were sent. */
+  /** What a 201 with a body handed back (every type but Auto App), in the order the editions were sent. */
   created: CreatedEdition[] | null;
   server: Server;
   pushType: PushTypeConfig;
@@ -92,6 +92,12 @@ function whatHappened(
         ? " distribute_now was on, so the server publishes each one at its time, or right away if that time has passed."
         : notSent
     }`;
+  if (pushType.id === "news_push" && server === "ecs-api")
+    return `The API created the news notifications, one for each account that follows the word, has signed in to the v2 app and has by_word on.${
+      distributeNow
+        ? " distribute_now was on, so the server publishes each one at its time, or right away if that time has passed."
+        : notSent
+    }`;
   const sending = !pushType.distributeNow
     ? ""
     : distributeNow
@@ -100,10 +106,19 @@ function whatHappened(
   return `The API accepted the run.${sending} This push type's endpoint is not confirmed with the backend team yet, so ask them what happens next.`;
 }
 
+/** Why an edition the server reports with 0 recipients will never arrive, and what to fix. */
+function noReadersNote(pushType: PushTypeConfig): string {
+  if (pushType.id === "news_push")
+    return "No account follows this word with by_word on, so nothing will arrive for the editions with 0 recipients. Subscribe a test account to the word and turn by_word on.";
+  return "No login ID matched a customer with push_score_weekly on, so nothing will arrive for the editions with 0 recipients. Check the Recipients list and the test accounts' settings.";
+}
+
 /** Why the numbers above are not a delivery count. */
 function readersNote(pushType: PushTypeConfig): string {
   if (pushType.readers === "list")
     return "“Login IDs sent” is not a count of people: each id has to match an active customer with the right notification setting on, and anyone who fails is dropped quietly.";
+  if (pushType.id === "news_push")
+    return "Only accounts that follow the word, have signed in to the v2 app and have by_word on receive it. The recipient count above is how many the server found.";
   if (pushType.readers === "word")
     return "Only accounts that follow the word receive it. If your test account does not follow it, nothing arrives and nothing says so.";
   return "Each order line's member still has to meet the order condition and have the order setting on. Excluded accounts are skipped.";
@@ -171,7 +186,9 @@ export function DoneView({
                   >
                     {made ? (
                       <>
-                        {`Edition #${made.id} · ${made.topics_count} topic${made.topics_count === 1 ? "" : "s"}`}
+                        {`Edition #${made.id}`}
+                        {made.topics_count !== undefined &&
+                          ` · ${made.topics_count} topic${made.topics_count === 1 ? "" : "s"}`}
                         {made.notifications_count !== undefined && (
                           <span
                             className={
@@ -210,9 +227,7 @@ export function DoneView({
       </p>
       {created?.some((made) => made.notifications_count === 0) && (
         <p className="mt-3 text-[13.5px] leading-relaxed font-semibold text-red-ink">
-          No login ID matched a customer with push_score_weekly on, so nothing
-          will arrive for the editions with 0 recipients. Check the Recipients
-          list and the test accounts&apos; settings.
+          {noReadersNote(pushType)}
         </p>
       )}
       <Button className="mt-9" onClick={onStartOver}>

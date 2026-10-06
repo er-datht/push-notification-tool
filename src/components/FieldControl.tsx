@@ -114,7 +114,7 @@ export function FieldControl({
         id={`${idPrefix}-${f.key}`}
         placeholder={f.placeholder}
         inputMode={f.numeric ? "numeric" : undefined}
-        maxLength={f.key === "deliv_id" ? DELIV_ID_MAX : undefined}
+        maxLength={f.maxLength}
         aria-invalid={bad || undefined}
         aria-describedby={describedBy}
         value={value}

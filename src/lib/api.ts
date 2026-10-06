@@ -43,9 +43,10 @@ export interface PushPayload {
 }
 
 /**
- * One edition a `201` hands back (Normal, In store and Score Push; Auto App's 201 is empty).
- * Normal's and Score's have a one-hour window (`period_start`/`period_end`), In store's a single
- * `will_publish_at`. Only Score's says how many recipients are left (`notifications_count`).
+ * One edition a `201` hands back (Normal, In store, Score and News Push; Auto App's 201 is empty).
+ * Normal's, Score's and News' have a one-hour window (`period_start`/`period_end`), In store's a
+ * single `will_publish_at`. News has no topics, so no `topics_count`; Score and News say how many
+ * recipients are left (`notifications_count`).
  */
 export interface CreatedEdition {
   id: number;
@@ -53,8 +54,10 @@ export interface CreatedEdition {
   period_end?: string;
   will_publish_at?: string;
   status: string;
-  topics_count: number;
+  topics_count?: number;
   notifications_count?: number;
+  /** News only: the article id that was sent. */
+  article_id?: number;
 }
 
 export type SubmitResult =
@@ -291,7 +294,7 @@ export async function submitPush(
     );
   }
 
-  // Auto App's 201 is empty — zero bytes. Normal, In store and Score's 201 list the editions
+  // Auto App's 201 is empty — zero bytes. Every other type's 201 lists the editions
   // created. Read a body only when there is one, and never fail the run over it: the server
   // already said yes.
   if (res.ok) {
