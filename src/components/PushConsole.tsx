@@ -146,7 +146,7 @@ export function PushConsole() {
   const [submitting, setSubmitting] = useState(false);
   // The payload the API said 201 to. Auto App's 201 is empty, so this is the whole record of that run.
   const [sent, setSent] = useState<PushPayload | null>(null);
-  // What a 201 with a body handed back (Normal, In store): the editions the server created.
+  // What a 201 with a body handed back (Normal, In store, Score): the editions the server created.
   const [created, setCreated] = useState<CreatedEdition[] | null>(null);
   const [apiVerdict, setApiVerdict] = useState<ApiVerdict | null>(null);
   // The DOM id of the first thing that needs fixing. A card below the fold gets marked red

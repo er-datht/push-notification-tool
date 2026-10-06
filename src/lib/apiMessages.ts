@@ -76,6 +76,28 @@ const WORDING_BY_ERROR_ID: Record<string, Wording> = {
   'IS-0204': 'Word ID must be a whole number above 0, at most 16 digits.',
   'IS-0205': 'Enter a valid delivery time.',
   'IS-0206': 'That time is already used by another in-store notification. Pick a different time.',
+
+  // Score Push (../fe-docs/API-DOC-score-push.md). Whole request. SP-0001 is assumed to be the 422
+  // envelope's own id, as IS-0001 is for In store.
+  'SP-0001': 'Some values were not accepted.',
+  'SP-0002': 'The API token was not accepted. Check it and try again.',
+  'SP-0003': 'Something went wrong. Reload the page and try again.',
+  'SP-0004': 'Something went wrong. Reload the page and try again.',
+  'SP-0005':
+    'The server could not create the push. Some notifications may already exist, so ask the backend team before sending again.',
+  'SP-0006':
+    'The e+ search API did not answer, so a show code could not be expanded. Notifications before it may already exist. A full code with a P021… part avoids the search.',
+  // Run settings
+  'SP-0101': 'Enter a valid date.',
+  'SP-0102': 'Add at least one login ID.',
+  'SP-0103': 'Add at least one notification.',
+  // One notification, or one show in it
+  'SP-0201': 'Add at least one show.',
+  'SP-0202': 'Enter the show code.',
+  'SP-0203': 'Enter a valid show code, like 9014500001-P0030056. Leave out the [公演] prefix.',
+  'SP-0204': 'Word ID must be a whole number above 0, at most 16 digits.',
+  'SP-0205': 'Pick preorder or firstcome.',
+  'SP-0206': 'Enter a valid delivery time.',
 }
 
 const KIND_BY_CODE = Object.fromEntries(

@@ -139,7 +139,8 @@ export function ItemList({
                     onChange={(key, value) => onPatchItem(item.id, key, value)}
                     hint={
                       (pushType.id === "normal_push" ||
-                        pushType.id === "last_minute_push") &&
+                        pushType.id === "last_minute_push" ||
+                        pushType.id === "score_push") &&
                       f.key === "code" &&
                       isExpandableCode(item.values.code ?? "")
                         ? EXPANSION_HINT
